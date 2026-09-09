@@ -231,13 +231,23 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
 
                 const current = (global as any).__santafe_store || { tickets: [], orders: [], shiftCuts: [], outflows: [], customers: [] };
 
-                // Merge tickets
+                // Merge tickets (Garantizar que ventas en el mismo minuto o segundos nunca se pierdan)
                 const ticketMap = new Map();
+                const getTicketKey = (t: any) => {
+                  if (t.id && String(t.id).trim() !== '') return `id:${String(t.id).trim()}`;
+                  if (t.folio && String(t.folio).trim() !== '') return `folio:${String(t.folio).trim()}`;
+                  const genId = `ticket-${t.timestamp ? new Date(t.timestamp).getTime() : Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+                  t.id = genId;
+                  return `id:${genId}`;
+                };
+
                 for (const t of (current.tickets || [])) {
-                  ticketMap.set(t.id || t.folio || `${t.date}_${t.time}_${t.total}`, t);
+                  if (!t) continue;
+                  ticketMap.set(getTicketKey(t), t);
                 }
                 for (const t of (payload.tickets || [])) {
-                  const key = t.id || t.folio || `${t.date}_${t.time}_${t.total}`;
+                  if (!t) continue;
+                  const key = getTicketKey(t);
                   if (ticketMap.has(key)) {
                     ticketMap.set(key, { ...ticketMap.get(key), ...t });
                   } else {

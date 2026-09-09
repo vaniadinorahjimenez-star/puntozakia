@@ -93,6 +93,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   // Terminal Clip Wi-Fi & PayPal Zettle state
   const [showClipModal, setShowClipModal] = useState<boolean>(false);
   const [showZettleModal, setShowZettleModal] = useState<boolean>(false);
+  const [activeCardFolio, setActiveCardFolio] = useState<string>('');
   const [zettleDevice, setZettleDevice] = useState<ZettleDeviceInfo | null>(getZettleConnectionInfo());
   const [isConnectingZettlePos, setIsConnectingZettlePos] = useState<boolean>(false);
 
@@ -678,18 +679,18 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
     playCashSound();
 
-    const folio = getNextTicketFolio();
+    const folio = getNextTicketFolio(tickets);
     const effectivePaid = numericCashGiven > 0 ? numericCashGiven : total;
     const effectiveChange = effectivePaid >= total ? effectivePaid - total : 0;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
 
     const newTicket: SaleTicket = {
-      id: `sale-${Date.now()}`,
+      id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       folio,
       timestamp: new Date().toISOString(),
       date: getTodayString(),
-      time: getNowTimeString(),
+      time: getNowTimeString(true),
       items: [...ticketItems],
       subtotal,
       discount: totalDiscount,
@@ -757,7 +758,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
     playCashSound();
 
-    const folio = getNextTicketFolio();
+    const folio = getNextTicketFolio(tickets);
     const currentTotal = total;
     const currentPieces = totalPieces;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
@@ -766,11 +767,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     const effectiveChange = effectivePaid >= currentTotal ? effectivePaid - currentTotal : 0;
 
     const newTicket: SaleTicket = {
-      id: `sale-${Date.now()}`,
+      id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       folio,
       timestamp: new Date().toISOString(),
       date: getTodayString(),
-      time: getNowTimeString(),
+      time: getNowTimeString(true),
       items: ticketItems,
       subtotal,
       discount: totalDiscount,
@@ -840,16 +841,17 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     if (ticketItems.length === 0) return;
 
     playCashSound();
-    const folio = getNextTicketFolio();
+    const folio = cardDetails.reference || activeCardFolio || getNextTicketFolio(tickets);
+    setActiveCardFolio('');
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
 
     const newTicket: SaleTicket = {
-      id: `sale-${Date.now()}`,
+      id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       folio,
       timestamp: new Date().toISOString(),
       date: getTodayString(),
-      time: getNowTimeString(),
+      time: getNowTimeString(true),
       items: ticketItems,
       subtotal,
       discount: totalDiscount,
@@ -2055,6 +2057,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                     onClick={() => {
                       if (ticketItems.length === 0) return;
                       playBeep(750, 'sine', 0.05);
+                      const f = getNextTicketFolio(tickets);
+                      setActiveCardFolio(f);
                       setShowClipModal(true);
                     }}
                     className="bg-gradient-to-r from-[#FF5A00] to-[#E04D00] hover:from-[#E04D00] hover:to-[#C43E00] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-[#E04D00] min-h-[46px]"
@@ -2121,6 +2125,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               type="button"
               onClick={() => {
                 playBeep(750, 'sine', 0.05);
+                const f = getNextTicketFolio(tickets);
+                setActiveCardFolio(f);
                 setShowClipModal(true);
               }}
               className="bg-gradient-to-r from-[#FF5A00] to-[#E04D00] text-white font-black text-[11px] py-2 px-1 rounded-xl shadow-xs flex items-center justify-center gap-1 active:scale-95 cursor-pointer border border-[#E04D00] whitespace-nowrap"
@@ -3703,9 +3709,12 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         <ClipPaymentModal
           isOpen={showClipModal}
           amount={total}
-          folio={getNextTicketFolio()}
+          folio={activeCardFolio || getNextTicketFolio(tickets)}
           customerName={selectedCustomer ? selectedCustomer.name : (phoneSearch.replace(/\D/g, '') ? `Tel: ${phoneSearch.replace(/\D/g, '')}` : undefined)}
-          onClose={() => setShowClipModal(false)}
+          onClose={() => {
+            setShowClipModal(false);
+            setActiveCardFolio('');
+          }}
           onPaymentApproved={(cardDetails) => {
             setShowClipModal(false);
             handleCardCheckout(cardDetails);
@@ -3718,9 +3727,12 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         <ZettleBluetoothModal
           isOpen={showZettleModal}
           amount={total}
-          folio={getNextTicketFolio()}
+          folio={activeCardFolio || getNextTicketFolio(tickets)}
           customerName={selectedCustomer ? selectedCustomer.name : (phoneSearch.replace(/\D/g, '') ? `Tel: ${phoneSearch.replace(/\D/g, '')}` : undefined)}
-          onClose={() => setShowZettleModal(false)}
+          onClose={() => {
+            setShowZettleModal(false);
+            setActiveCardFolio('');
+          }}
           onPaymentApproved={(cardDetails) => handleCardCheckout(cardDetails)}
           onConfirmCardPayment={(cardDetails) => handleCardCheckout(cardDetails)}
         />

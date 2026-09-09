@@ -64,22 +64,31 @@ function saveStore() {
 loadStore();
 
 /**
- * Combina dos listas de Tickets sin perder ninguno.
+ * Combina dos listas de Tickets sin perder absolutamente ninguno.
+ * Soporta ventas consecutivas dentro del mismo minuto y con segundos de diferencia.
  */
 function mergeTickets(existingList, incomingList) {
   const map = new Map();
+
+  const getTicketKey = (t) => {
+    if (t.id && String(t.id).trim() !== '') return `id:${String(t.id).trim()}`;
+    if (t.folio && String(t.folio).trim() !== '') return `folio:${String(t.folio).trim()}`;
+    const genId = `ticket-${t.timestamp ? new Date(t.timestamp).getTime() : Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    t.id = genId;
+    return `id:${genId}`;
+  };
   
   // Agregar existentes
   for (const t of existingList || []) {
     if (!t) continue;
-    const key = t.id || t.folio || `${t.date}_${t.time}_${t.total}`;
+    const key = getTicketKey(t);
     map.set(key, t);
   }
 
   // Combinar entrantes
   for (const t of incomingList || []) {
     if (!t) continue;
-    const key = t.id || t.folio || `${t.date}_${t.time}_${t.total}`;
+    const key = getTicketKey(t);
     if (map.has(key)) {
       const prev = map.get(key);
       map.set(key, {
@@ -97,8 +106,9 @@ function mergeTickets(existingList, incomingList) {
   }
 
   return Array.from(map.values()).sort((a, b) => {
-    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00'}`).getTime();
-    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00'}`).getTime();
+    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00:00'}`).getTime();
+    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00:00'}`).getTime();
+    if (isNaN(timeA) || isNaN(timeB)) return 0;
     return timeB - timeA;
   });
 }

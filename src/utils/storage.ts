@@ -223,9 +223,12 @@ export function getTodayString(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function getNowTimeString(): string {
+export function getNowTimeString(includeSeconds = true): string {
   const now = new Date();
-  return now.toTimeString().slice(0, 5);
+  if (includeSeconds) {
+    return now.toTimeString().slice(0, 8); // "HH:MM:SS"
+  }
+  return now.toTimeString().slice(0, 5); // "HH:MM"
 }
 
 // Convertir hora tipo "02:30 PM" o "14:30" a minutos del día
@@ -641,19 +644,37 @@ export function saveProducts(products: BreadProduct[]): void {
 }
 
 /**
- * Helper para combinar / fusionar listas de Tickets sin perder ninguno.
+ * Helper para combinar / fusionar listas de Tickets sin perder absolutamente ningún ticket ni venta.
+ * Garantiza que ventas que ocurren en el mismo minuto o con segundos de diferencia nunca se sobrescriban.
  * Preserva cobros con tarjeta, folios y detalles de productos.
  */
 export function mergeTickets(existing: SaleTicket[], incoming: SaleTicket[]): SaleTicket[] {
   const map = new Map<string, SaleTicket>();
+
+  const getTicketKey = (t: SaleTicket): string => {
+    // Si tiene un ID único válido, es la clave primaria inequívoca
+    if (t.id && String(t.id).trim() !== '') {
+      return `id:${String(t.id).trim()}`;
+    }
+    // Si tiene un folio único válido, usarlo como clave secundaria
+    if (t.folio && String(t.folio).trim() !== '') {
+      return `folio:${String(t.folio).trim()}`;
+    }
+    // Si no tiene ni ID ni folio (ticket antiguo o malformado), asignar ID único para JAMÁS fusionarlo ni perderlo
+    const genId = `ticket-${t.timestamp ? new Date(t.timestamp).getTime() : Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    t.id = genId;
+    return `id:${genId}`;
+  };
+
   for (const t of existing || []) {
     if (!t) continue;
-    const key = t.id || t.folio || `${t.date}_${t.time}_${t.total}`;
+    const key = getTicketKey(t);
     map.set(key, t);
   }
+
   for (const t of incoming || []) {
     if (!t) continue;
-    const key = t.id || t.folio || `${t.date}_${t.time}_${t.total}`;
+    const key = getTicketKey(t);
     if (map.has(key)) {
       const prev = map.get(key)!;
       map.set(key, {
@@ -669,9 +690,11 @@ export function mergeTickets(existing: SaleTicket[], incoming: SaleTicket[]): Sa
       map.set(key, t);
     }
   }
+
   return Array.from(map.values()).sort((a, b) => {
-    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00'}`).getTime();
-    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00'}`).getTime();
+    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00:00'}`).getTime();
+    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00:00'}`).getTime();
+    if (isNaN(timeA) || isNaN(timeB)) return 0;
     return timeB - timeA;
   });
 }
@@ -798,7 +821,26 @@ export function mergeCustomers(existing: Customer[], incoming: Customer[]): Cust
 export function loadTickets(): SaleTicket[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.TICKETS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // Garantizar que cada ticket cargado tenga un ID único y un folio no vacío
+        return parsed.map((t, idx) => {
+          if (!t) return t;
+          const id = t.id && String(t.id).trim() !== '' 
+            ? String(t.id).trim() 
+            : `ticket-${t.timestamp ? new Date(t.timestamp).getTime() : Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+          const folio = t.folio && String(t.folio).trim() !== ''
+            ? String(t.folio).trim()
+            : `T-${String(1000 + idx).padStart(6, '0')}`;
+          return {
+            ...t,
+            id,
+            folio
+          };
+        });
+      }
+    }
   } catch (e) {
     console.error('Error loading tickets', e);
   }
@@ -917,16 +959,37 @@ export function saveDriverCustomers(customers: DriverCustomer[]): void {
   localStorage.setItem(STORAGE_KEYS.DRIVER_CUSTOMERS, JSON.stringify(customers));
 }
 
-export function getNextTicketFolio(): string {
+export function getNextTicketFolio(existingTickets?: SaleTicket[]): string {
   let num = 1005;
   try {
     const current = localStorage.getItem(STORAGE_KEYS.NEXT_TICKET_NUM);
     if (current) {
-      num = parseInt(current, 10);
+      const parsed = parseInt(current, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        num = parsed;
+      }
     }
   } catch {
     // fallback
   }
+
+  // Verificar con los tickets existentes para nunca repetir un folio
+  try {
+    const checkList = existingTickets || loadTickets();
+    if (Array.isArray(checkList) && checkList.length > 0) {
+      for (const t of checkList) {
+        if (t && typeof t.folio === 'string' && t.folio.startsWith('T-')) {
+          const folioNum = parseInt(t.folio.replace('T-', ''), 10);
+          if (!isNaN(folioNum) && folioNum >= num) {
+            num = folioNum + 1;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   localStorage.setItem(STORAGE_KEYS.NEXT_TICKET_NUM, (num + 1).toString());
   return `T-${String(num).padStart(6, '0')}`;
 }
