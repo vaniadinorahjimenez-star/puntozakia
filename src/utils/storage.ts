@@ -829,7 +829,7 @@ export function loadTickets(): SaleTicket[] {
           if (!t) return t;
           const id = t.id && String(t.id).trim() !== '' 
             ? String(t.id).trim() 
-            : `ticket-${t.timestamp ? new Date(t.timestamp).getTime() : Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+            : `ticket-${t.date || 'd'}-${t.folio || idx}`;
           const folio = t.folio && String(t.folio).trim() !== ''
             ? String(t.folio).trim()
             : `T-${String(1000 + idx).padStart(6, '0')}`;

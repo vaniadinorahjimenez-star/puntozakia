@@ -46,10 +46,30 @@ function notifyListeners(data: NonNullable<CloudSyncResult['mergedData']>) {
   });
 }
 
+let isSyncInProgress = false;
+let hasPendingSync = false;
+let pendingProvidedData: {
+  tickets?: SaleTicket[];
+  orders?: BakeryOrder[];
+  shiftCuts?: ShiftCutRecord[];
+  outflows?: CashOutflowItem[];
+  customers?: Customer[];
+} | undefined = undefined;
+
+function areTicketsIdentical(a: SaleTicket[], b: SaleTicket[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]?.id !== b[i]?.id || a[i]?.paymentMethod !== b[i]?.paymentMethod) return false;
+  }
+  return true;
+}
+
 /**
  * Realiza la sincronización combinada (Merge) con la nube de Netlify
  * NUNCA sobrescribe datos; combina los tickets, cobros de tarjeta, pedidos y cortes
  * de la PC y del Teléfono.
+ * Protegido contra condiciones de carrera: si se registran ventas mientras la petición está en vuelo,
+ * jamás se perderán.
  */
 export async function syncWithCloud(providedData?: {
   tickets?: SaleTicket[];
@@ -58,83 +78,119 @@ export async function syncWithCloud(providedData?: {
   outflows?: CashOutflowItem[];
   customers?: Customer[];
 }): Promise<CloudSyncResult> {
-  const localTickets = providedData?.tickets || loadTickets();
-  const localOrders = providedData?.orders || loadOrders();
-  const localShiftCuts = providedData?.shiftCuts || loadShiftCuts();
-  const localOutflows = providedData?.outflows || loadOutflows();
-  const localCustomers = providedData?.customers || loadCustomers();
-
-  const payload = {
-    tickets: localTickets,
-    orders: localOrders,
-    shiftCuts: localShiftCuts,
-    outflows: localOutflows,
-    customers: localCustomers,
-    timestamp: new Date().toISOString()
-  };
-
-  const endpoints = ['/.netlify/functions/sync-data', '/api/sync'];
-  let lastError: any = null;
-
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        lastError = new Error(`HTTP ${res.status}`);
-        continue;
-      }
-
-      const json = await res.json();
-      if (json.success && json.data) {
-        // Combinar datos locales con los devueltos por la nube
-        const mergedTickets = mergeTickets(localTickets, json.data.tickets || []);
-        const mergedOrders = mergeOrders(localOrders, json.data.orders || []);
-        const mergedShiftCuts = mergeShiftCuts(localShiftCuts, json.data.shiftCuts || []);
-        const mergedOutflows = mergeOutflows(localOutflows, json.data.outflows || []);
-        const mergedCustomers = mergeCustomers(localCustomers, json.data.customers || []);
-
-        // Guardar la versión combinada en localStorage local
-        localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
-        localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
-        localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
-        localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
-
-        const resultData = {
-          tickets: mergedTickets,
-          orders: mergedOrders,
-          shiftCuts: mergedShiftCuts,
-          outflows: mergedOutflows,
-          customers: mergedCustomers
-        };
-
-        notifyListeners(resultData);
-
-        return {
-          success: true,
-          message: `Sincronización combinada exitosa (${mergedTickets.length} tickets, ${mergedOrders.length} pedidos)`,
-          mergedData: resultData
-        };
-      }
-    } catch (err) {
-      lastError = err;
-    }
+  // Si ya hay una sincronización en proceso, guardar los datos pendientes y esperar a que termine
+  if (isSyncInProgress) {
+    hasPendingSync = true;
+    pendingProvidedData = providedData;
+    return {
+      success: true,
+      message: 'Sincronización en cola para procesar ventas inmediatas'
+    };
   }
 
-  // Fallback si no hay conexión a internet o la función no responde:
-  // Garantizar que localmente también se combinen los datos y no se pierda nada
-  return {
-    success: false,
-    message: 'No se pudo conectar a la nube de Netlify, guardado local seguro activado',
-    error: lastError?.message || 'Error de red'
-  };
+  isSyncInProgress = true;
+
+  try {
+    // Cargar datos locales frescos combinados con los proporcionados
+    const currentStoredTickets = loadTickets();
+    const localTickets = mergeTickets(currentStoredTickets, providedData?.tickets || []);
+    const localOrders = mergeOrders(loadOrders(), providedData?.orders || []);
+    const localShiftCuts = mergeShiftCuts(loadShiftCuts(), providedData?.shiftCuts || []);
+    const localOutflows = mergeOutflows(loadOutflows(), providedData?.outflows || []);
+    const localCustomers = mergeCustomers(loadCustomers(), providedData?.customers || []);
+
+    const payload = {
+      tickets: localTickets,
+      orders: localOrders,
+      shiftCuts: localShiftCuts,
+      outflows: localOutflows,
+      customers: localCustomers,
+      timestamp: new Date().toISOString()
+    };
+
+    const endpoints = ['/.netlify/functions/sync-data', '/api/sync'];
+    let lastError: any = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          lastError = new Error(`HTTP ${res.status}`);
+          continue;
+        }
+
+        const json = await res.json();
+        if (json.success && json.data) {
+          // CRÍTICO: Recargar los datos locales MÁS RECIENTES para no perder
+          // ventas que hayan ocurrido mientras la petición HTTP estaba en vuelo (diferencia de segundos)
+          const freshLocalTickets = loadTickets();
+          const freshLocalOrders = loadOrders();
+          const freshLocalShiftCuts = loadShiftCuts();
+          const freshLocalOutflows = loadOutflows();
+          const freshLocalCustomers = loadCustomers();
+
+          const mergedTickets = mergeTickets(freshLocalTickets, json.data.tickets || []);
+          const mergedOrders = mergeOrders(freshLocalOrders, json.data.orders || []);
+          const mergedShiftCuts = mergeShiftCuts(freshLocalShiftCuts, json.data.shiftCuts || []);
+          const mergedOutflows = mergeOutflows(freshLocalOutflows, json.data.outflows || []);
+          const mergedCustomers = mergeCustomers(freshLocalCustomers, json.data.customers || []);
+
+          // Guardar la versión combinada en localStorage local
+          localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
+          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
+          localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+          localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
+
+          const resultData = {
+            tickets: mergedTickets,
+            orders: mergedOrders,
+            shiftCuts: mergedShiftCuts,
+            outflows: mergedOutflows,
+            customers: mergedCustomers
+          };
+
+          // Notificar solo si hay cambios reales para evitar ciclos infinitos
+          const ticketsChanged = !areTicketsIdentical(freshLocalTickets, mergedTickets);
+          if (ticketsChanged || mergedOrders.length !== freshLocalOrders.length) {
+            notifyListeners(resultData);
+          }
+
+          return {
+            success: true,
+            message: `Sincronización combinada exitosa (${mergedTickets.length} tickets, ${mergedOrders.length} pedidos)`,
+            mergedData: resultData
+          };
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    return {
+      success: false,
+      message: 'No se pudo conectar a la nube de Netlify, guardado local seguro activado',
+      error: lastError?.message || 'Error de red'
+    };
+  } finally {
+    isSyncInProgress = false;
+    if (hasPendingSync) {
+      hasPendingSync = false;
+      const nextData = pendingProvidedData;
+      pendingProvidedData = undefined;
+      // Ejecutar la siguiente sincronización acumulada
+      setTimeout(() => {
+        syncWithCloud(nextData);
+      }, 100);
+    }
+  }
 }
 
 /**
@@ -183,7 +239,10 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
           customers: mergedCustomers
         };
 
-        notifyListeners(resultData);
+        const ticketsChanged = !areTicketsIdentical(localTickets, mergedTickets);
+        if (ticketsChanged || mergedOrders.length !== localOrders.length) {
+          notifyListeners(resultData);
+        }
 
         return {
           success: true,

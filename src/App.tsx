@@ -28,6 +28,10 @@ import {
   saveDrivers,
   loadDriverCustomers,
   saveDriverCustomers,
+  mergeTickets,
+  mergeOrders,
+  mergeCustomers,
+  STORAGE_KEYS,
   DEFAULT_SETTINGS,
   DEFAULT_PRODUCTS,
   DEFAULT_DRIVERS,
@@ -101,27 +105,45 @@ export default function App() {
     // 1. Descargar y combinar datos existentes en la nube al abrir la app
     fetchAndMergeCloud();
 
-    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado
+    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado sin sobrescribir ventas recientes
     const unsubscribe = onCloudSyncUpdated((merged) => {
       if (merged.tickets && merged.tickets.length > 0) {
-        setTickets(merged.tickets);
+        setTickets(prev => {
+          const combined = mergeTickets(prev, merged.tickets);
+          if (combined.length === prev.length && combined.every((t, i) => t.id === prev[i]?.id)) {
+            return prev;
+          }
+          return combined;
+        });
       }
       if (merged.orders && merged.orders.length > 0) {
-        setOrders(merged.orders);
+        setOrders(prev => {
+          const combined = mergeOrders(prev, merged.orders);
+          if (combined.length === prev.length && combined.every((o, i) => o.id === prev[i]?.id)) {
+            return prev;
+          }
+          return combined;
+        });
       }
       if (merged.customers && merged.customers.length > 0) {
-        setCustomers(merged.customers);
+        setCustomers(prev => {
+          const combined = mergeCustomers(prev, merged.customers);
+          if (combined.length === prev.length && combined.every((c, i) => c.id === prev[i]?.id)) {
+            return prev;
+          }
+          return combined;
+        });
       }
     });
 
     // 3. Sincronizar entre pestañas abiertas en el mismo dispositivo
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'santafe_tickets') {
-        setTickets(loadTickets());
+        setTickets(prev => mergeTickets(prev, loadTickets()));
       } else if (e.key === 'santafe_orders') {
-        setOrders(loadOrders());
+        setOrders(prev => mergeOrders(prev, loadOrders()));
       } else if (e.key === 'santafe_customers') {
-        setCustomers(loadCustomers());
+        setCustomers(prev => mergeCustomers(prev, loadCustomers()));
       }
     };
     window.addEventListener('storage', handleStorageChange);
@@ -148,28 +170,45 @@ export default function App() {
 
   // Handlers
   const handleSaveTicket = (newTicket: SaleTicket, updatedCustomer?: Customer) => {
-    setTickets(prev => [newTicket, ...prev]);
+    // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
+    const currentTickets = loadTickets();
+    const merged = mergeTickets([newTicket], currentTickets);
+    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+
+    // 2. Actualizar estado de React functionalmente asegurando que newTicket esté presente
+    setTickets(prev => mergeTickets([newTicket], prev));
 
     if (updatedCustomer) {
       setCustomers(prev => {
         const idx = prev.findIndex(c => c.id === updatedCustomer.id || c.phone === updatedCustomer.phone);
+        let updatedList: Customer[];
         if (idx >= 0) {
-          const clone = [...prev];
-          clone[idx] = updatedCustomer;
-          return clone;
+          updatedList = [...prev];
+          updatedList[idx] = updatedCustomer;
         } else {
-          return [updatedCustomer, ...prev];
+          updatedList = [updatedCustomer, ...prev];
         }
+        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
+        return updatedList;
       });
     }
+
+    // 3. Disparar sincronización con la nube con los datos actualizados
+    syncWithCloud({ tickets: merged });
   };
 
   const handleUpdateTicket = (updatedTicket: SaleTicket) => {
-    setTickets(prev => prev.map(t => (t.id === updatedTicket.id ? updatedTicket : t)));
+    setTickets(prev => {
+      const updated = prev.map(t => (t.id === updatedTicket.id ? updatedTicket : t));
+      saveTickets(updated, true);
+      return updated;
+    });
   };
 
   const handleDeleteTicket = (ticketId: string) => {
-    setTickets(prev => prev.filter(t => t.id !== ticketId));
+    const updated = loadTickets().filter(t => t.id !== ticketId);
+    saveTickets(updated, true);
+    setTickets(updated);
   };
 
   const handleRegisterCustomer = (newCustomer: Customer) => {

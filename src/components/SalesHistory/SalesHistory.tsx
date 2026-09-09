@@ -161,12 +161,20 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
 
+  // Helper para resolver la fecha del ticket de forma infalible
+  const getTicketDate = (t: SaleTicket): string => {
+    if (t.date && typeof t.date === 'string' && t.date.trim()) return t.date.trim();
+    if (t.timestamp && typeof t.timestamp === 'string') return t.timestamp.split('T')[0];
+    return todayStr;
+  };
+
   // 1. DATE-MATCHED TICKETS (Mostrador)
   const dateMatchedTickets = tickets.filter(ticket => {
-    if (dateFilterMode === 'hoy' && ticket.date !== todayStr) return false;
-    if (dateFilterMode === 'ayer' && ticket.date !== yesterdayStr) return false;
-    if (dateFilterMode === 'semana' && ticket.date < sevenDaysAgoStr) return false;
-    if (dateFilterMode === 'personalizado' && ticket.date !== selectedDate) return false;
+    const tDate = getTicketDate(ticket);
+    if (dateFilterMode === 'hoy' && tDate !== todayStr) return false;
+    if (dateFilterMode === 'ayer' && tDate !== yesterdayStr) return false;
+    if (dateFilterMode === 'semana' && tDate < sevenDaysAgoStr) return false;
+    if (dateFilterMode === 'personalizado' && tDate !== selectedDate) return false;
     return true;
   });
 
