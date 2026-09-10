@@ -432,7 +432,15 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
     const cutPieces = targetTickets.reduce((sum, t) => sum + t.items.reduce((s, it) => s + it.quantity, 0), 0);
     const cutBreakdown = calculateTicketsBreakdown(targetTickets);
     const allOutflows = loadOutflows();
-    const totalOutflows = allOutflows.reduce((sum, o) => sum + o.amount, 0);
+    const targetDate = dateFilterMode === 'hoy' ? todayStr : (dateFilterMode === 'ayer' ? yesterdayStr : selectedDate);
+    const relevantOutflows = allOutflows.filter(o => {
+      const oDate = o.date || (o.createdAt ? o.createdAt.split('T')[0] : '');
+      if (oDate && oDate !== targetDate) return false;
+      if (!oDate) return false;
+      if (shiftType !== 'dia_completo' && o.shiftCode && o.shiftCode !== shiftType) return false;
+      return true;
+    });
+    const totalOutflows = relevantOutflows.reduce((sum, o) => sum + o.amount, 0);
     const expectedCash = 300 + cutCash - totalOutflows;
 
     const cutRecord: ShiftCutRecord = {
@@ -452,7 +460,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
       nonBreadPieces: cutBreakdown.nonBreadPieces,
       totalPieces: cutPieces,
       ticketsCount: targetTickets.length,
-      outflows: allOutflows,
+      outflows: relevantOutflows,
       totalOutflows,
       expectedCashInDrawer: expectedCash,
       createdAt: new Date().toISOString()

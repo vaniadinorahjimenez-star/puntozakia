@@ -129,10 +129,37 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     localStorage.setItem('santafe_next_shift_cash_pref', safe.toString());
   };
 
-  // Outflows / Salidas de dinero / Pagos a proveedores
-  const [outflows, setOutflows] = useState<CashOutflowItem[]>(() => {
+  // Código del turno actual para segmentación limpia de salidas
+  const currentShiftCode = useMemo(() => {
+    if (shiftType.includes('Completo')) return 'completo';
+    if (shiftType.includes('Turno 1')) return 'turno1';
+    return 'turno2';
+  }, [shiftType]);
+
+  // Almacenamiento maestro persistente de todas las salidas
+  const [allOutflows, setAllOutflows] = useState<CashOutflowItem[]>(() => {
     return loadOutflows();
   });
+
+  // Persistir en localStorage
+  useEffect(() => {
+    saveOutflows(allOutflows);
+  }, [allOutflows]);
+
+  // Salidas específicas del turno activo y de hoy:
+  // Al pasar al siguiente turno o al siguiente día, inicia completamente limpio
+  const outflows = useMemo(() => {
+    return allOutflows.filter(o => {
+      // 1. Debe corresponder al día de hoy (al pasar al siguiente día está 100% limpio)
+      const oDate = o.date || (o.createdAt ? o.createdAt.split('T')[0] : '');
+      if (oDate && oDate !== todayStr) return false;
+      if (!oDate) return false; // Salidas antiguas huérfanas sin fecha no se arrastran
+
+      // 2. Coincidencia con el turno seleccionado
+      if (currentShiftCode === 'completo') return true;
+      return o.shiftCode === currentShiftCode;
+    });
+  }, [allOutflows, todayStr, currentShiftCode]);
 
   // New Outflow Input Form
   const [newConcept, setNewConcept] = useState<string>('');
@@ -188,11 +215,6 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
       localStorage.setItem('santafe_last_cashier_name', cashierName.trim());
     }
   }, [cashierName]);
-
-  // Persist outflows
-  useEffect(() => {
-    saveOutflows(outflows);
-  }, [outflows]);
 
   // Filter tickets for today (all tickets for day)
   const allTodayTickets = useMemo(() => {
@@ -305,15 +327,19 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     playCashSound();
 
     const newOutflowItem: CashOutflowItem = {
-      id: `outflow-${Date.now()}`,
+      id: `outflow-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       concept: newConcept.trim(),
       amount: Math.round(amountNum),
       time: getNowTimeString(),
+      date: todayStr,
+      shiftCode: currentShiftCode === 'completo' ? 'turno1' : currentShiftCode,
+      shiftName: shiftType,
       recipient: newRecipient.trim() || undefined,
-      notes: newNotes.trim() || undefined
+      notes: newNotes.trim() || undefined,
+      createdAt: new Date().toISOString()
     };
 
-    setOutflows(prev => [newOutflowItem, ...prev]);
+    setAllOutflows(prev => [newOutflowItem, ...prev]);
     setNewConcept('');
     setNewAmount('');
     setNewRecipient('');
@@ -324,7 +350,20 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
   // Remove Outflow Handler
   const handleRemoveOutflow = (id: string) => {
     playBeep(400, 'sine', 0.08);
-    setOutflows(prev => prev.filter(o => o.id !== id));
+    setAllOutflows(prev => prev.filter(o => o.id !== id));
+  };
+
+  // Limpiar/Vaciar todas las salidas de este turno
+  const handleClearCurrentShiftOutflows = () => {
+    if (outflows.length === 0) return;
+    const shiftLabel = currentShiftCode === 'turno1' ? 'Turno 1' : currentShiftCode === 'turno2' ? 'Turno 2' : 'Día Completo';
+    const confirmClear = window.confirm(
+      `¿Deseas vaciar/limpiar las ${outflows.length} salidas registradas para ${shiftLabel}? Esta acción dejará las salidas de este turno en ceros.`
+    );
+    if (!confirmClear) return;
+    playBeep(400, 'sine', 0.08);
+    const shiftIds = new Set(outflows.map(o => o.id));
+    setAllOutflows(prev => prev.filter(o => !shiftIds.has(o.id)));
   };
 
   // Build current shift cut record
@@ -773,25 +812,40 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                     <TrendingDown className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="font-black text-sm text-rose-950 flex items-center gap-1.5">
+                    <h3 className="font-black text-sm text-rose-950 flex items-center gap-1.5 flex-wrap">
                       <span>Salidas de Dinero / Pagos a Proveedores</span>
-                      <span className="bg-rose-600 text-white text-[10px] px-2 py-0.2 rounded-full">Desglosado</span>
+                      <span className="bg-rose-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                        {currentShiftCode === 'turno1' ? 'Turno 1 (Mañana)' : currentShiftCode === 'turno2' ? 'Turno 2 (Tarde)' : 'Todo el Día'}
+                      </span>
                     </h3>
                     <p className="text-[11px] text-rose-700 font-medium">
-                      Se descuentan automáticamente del efectivo en caja y se imprimen en el corte
+                      Cada turno y día inicia limpio en ceros. Solo se descuentan del efectivo de este turno.
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  id="toggle-add-outflow-btn"
-                  onClick={() => setShowAddOutflowForm(prev => !prev)}
-                  className="bg-rose-600 hover:bg-rose-700 text-white font-black text-xs py-1.5 px-3 rounded-xl flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{showAddOutflowForm ? 'Cerrar Formulario' : '+ Agregar Salida'}</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {outflows.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearCurrentShiftOutflows}
+                      className="bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 font-bold text-xs py-1.5 px-2.5 rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Vaciar las salidas de este turno"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Limpiar Turno</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    id="toggle-add-outflow-btn"
+                    onClick={() => setShowAddOutflowForm(prev => !prev)}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-black text-xs py-1.5 px-3 rounded-xl flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{showAddOutflowForm ? 'Cerrar Formulario' : '+ Agregar Salida'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Quick Preset Buttons for common bakery expenses (Uber/Transporte, Prestamos, Alpura, Coca cola, Mantenimientos, Ahorro, Desayuno, otros) */}
@@ -900,8 +954,8 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
               {/* List of Outflows registered (DESGLOSE COMPLETO) */}
               <div className="space-y-1.5 max-h-56 overflow-y-auto">
                 {outflows.length === 0 ? (
-                  <div className="text-center py-3 bg-white/60 rounded-xl border border-rose-100 text-xs text-rose-800/70 italic font-medium">
-                    No hay salidas ni pagos a proveedores registrados hoy.
+                  <div className="text-center py-3.5 bg-white/60 rounded-xl border border-rose-100 text-xs text-rose-800/80 italic font-medium px-4">
+                    ✨ No hay salidas registradas para {currentShiftCode === 'turno1' ? 'el Turno 1 (Mañana)' : currentShiftCode === 'turno2' ? 'el Turno 2 (Tarde)' : 'el día de hoy'}. El corte inicia limpio en cada turno y día.
                   </div>
                 ) : (
                   outflows.map((item, idx) => (

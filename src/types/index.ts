@@ -161,6 +161,10 @@ export interface CashOutflowItem {
   time: string; // Auto-recorded time
   recipient?: string;
   notes?: string;
+  date?: string; // YYYY-MM-DD
+  shiftCode?: 'turno1' | 'turno2' | 'completo' | string;
+  shiftName?: string;
+  createdAt?: string;
 }
 
 export interface NonBreadItemSummary {

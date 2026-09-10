@@ -13,11 +13,12 @@ import {
   Gift,
   ChevronDown,
   Menu,
-  X
+  X,
+  TrendingUp
 } from 'lucide-react';
 import { Settings as SettingsType } from '../types';
 
-export type ActiveTabType = 'pos' | 'orders' | 'bakers' | 'delivery' | 'loyalty' | 'history' | 'admin';
+export type ActiveTabType = 'pos' | 'orders' | 'bakers' | 'analytics' | 'delivery' | 'loyalty' | 'history' | 'admin';
 
 interface NavbarProps {
   activeTab: ActiveTabType;
@@ -81,6 +82,14 @@ export const Navbar: React.FC<NavbarProps> = ({
       emoji: '👨‍🍳',
       badge: pendingProductionCount > 0 ? pendingProductionCount : undefined,
       description: 'Producción y horneado'
+    },
+    {
+      id: 'analytics' as ActiveTabType,
+      label: 'Estadísticas & Producción',
+      shortLabel: 'Estadísticas',
+      icon: TrendingUp,
+      emoji: '📈',
+      description: 'Charolas de bolillo y demanda'
     },
     {
       id: 'loyalty' as ActiveTabType,

@@ -47,6 +47,7 @@ import { BakersWorkshop } from './components/Bakers/BakersWorkshop';
 import { DeliveryDashboard } from './components/Delivery/DeliveryDashboard';
 import { LoyaltyManager } from './components/Loyalty/LoyaltyManager';
 import { SalesHistory } from './components/SalesHistory/SalesHistory';
+import { ProductionAnalytics } from './components/Analytics/ProductionAnalytics';
 import { AdminSettings } from './components/AdminSettings/AdminSettings';
 import { 
   syncWithCloud, 
@@ -373,6 +374,12 @@ export default function App() {
             settings={settings}
             onRegisterCustomer={handleRegisterCustomer}
             onUpdateCustomer={handleUpdateCustomer}
+          />
+        )}
+
+        {activeTab === 'analytics' && (
+          <ProductionAnalytics
+            tickets={tickets}
           />
         )}
 
