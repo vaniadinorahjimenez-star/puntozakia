@@ -36,7 +36,7 @@ type SimulationScenario = 'real' | 'lluvia' | 'frio_nublado' | 'calor';
 
 export const ZakiaWeatherDemandWidget: React.FC<ZakiaWeatherDemandWidgetProps> = ({
   onApplyWeatherBoost,
-  bolillosPerTray = 25
+  bolillosPerTray = 12
 }) => {
   const [weatherData, setWeatherData] = useState<BreadDemandForecast | null>(null);
   const [loading, setLoading] = useState<boolean>(true);

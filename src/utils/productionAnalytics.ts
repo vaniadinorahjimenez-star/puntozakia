@@ -289,9 +289,9 @@ export function calculateProductionStats(
     items: Array<{ price: number; quantity: number; name?: string; total?: number }>;
     total: number;
   }>,
-  bolillosPerTray: number = 25
+  bolillosPerTray: number = 12
 ): ProductionAnalyticsResult {
-  const safePerTray = Math.max(10, bolillosPerTray || 25);
+  const safePerTray = Math.max(1, bolillosPerTray || 12);
 
   // Inicializar contadores por categoría
   const categoryCounts: Record<BreadClassificationKey, { pieces: number; revenue: number }> = {

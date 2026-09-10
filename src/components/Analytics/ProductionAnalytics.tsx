@@ -21,8 +21,11 @@ import {
   Award,
   CloudRain,
   MapPin,
-  Coffee
+  Coffee,
+  Trophy,
+  Lock
 } from 'lucide-react';
+import { ProductRankingChart } from './ProductRankingChart';
 import {
   ResponsiveContainer,
   BarChart,
@@ -54,15 +57,13 @@ interface ProductionAnalyticsProps {
 }
 
 type PeriodFilterMode = 'hoy' | 'ayer' | '7dias' | '30dias' | 'todos' | 'custom';
-type AnalyticsSubTab = 'bolillo' | 'clima' | 'semana' | 'tandas' | 'categorias';
-
-const TRAY_OPTIONS = [20, 24, 25, 30];
+type AnalyticsSubTab = 'mas_vendidos' | 'bolillo' | 'clima' | 'semana' | 'tandas' | 'categorias';
 
 export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ tickets }) => {
   const todayStr = useMemo(() => getTodayString(), []);
   
-  // Tab activo dentro de Estadísticas
-  const [activeSubTab, setActiveSubTab] = useState<AnalyticsSubTab>('bolillo');
+  // Tab activo dentro de Estadísticas: arranca por defecto en Más Vendidos
+  const [activeSubTab, setActiveSubTab] = useState<AnalyticsSubTab>('mas_vendidos');
 
   // Estado meteorológico de Zakia Querétaro (CP 76269)
   const [weatherInfo, setWeatherInfo] = useState<BreadDemandForecast | null>(null);
@@ -85,21 +86,12 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
   const [customDateStart, setCustomDateStart] = useState<string>(todayStr);
   const [customDateEnd, setCustomDateEnd] = useState<string>(todayStr);
 
-  // Piezas por charola de bolillo (Configurable y guardada)
-  const [bolillosPerTray, setBolillosPerTray] = useState<number>(() => {
-    const saved = localStorage.getItem('santafe_bolillos_per_tray');
-    if (saved) {
-      const num = parseInt(saved, 10);
-      if (!isNaN(num) && num >= 10 && num <= 50) return num;
-    }
-    return 25; // 25 piezas por charola estándar
-  });
+  // Piezas por charola de bolillo: FIJO A 12 PIEZAS POR CHAROLA (Estándar Panadería Santa Fé)
+  const bolillosPerTray = 12;
 
-  // Guardar configuración de charola
-  const handleSetTraySize = (size: number) => {
-    setBolillosPerTray(size);
-    localStorage.setItem('santafe_bolillos_per_tray', size.toString());
-  };
+  useEffect(() => {
+    localStorage.setItem('santafe_bolillos_per_tray', '12');
+  }, []);
 
   // Calcular ayer en formato YYYY-MM-DD
   const yesterdayStr = useMemo(() => {
@@ -223,47 +215,21 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
             </p>
           </div>
 
-          {/* Configuración rápida de Piezas por Charola */}
-          <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-amber-400/20 flex flex-col gap-2 shrink-0">
+          {/* Capacidad Estándar Fija de Charola */}
+          <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-amber-400/25 flex flex-col justify-center gap-1.5 shrink-0">
             <div className="flex items-center justify-between gap-3 text-xs">
               <span className="text-amber-200 font-bold flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                <span>Piezas por Charola:</span>
+                <span>🥖</span>
+                <span>Capacidad por Charola:</span>
               </span>
-              <span className="bg-amber-500 text-stone-950 font-black text-xs px-2 py-0.5 rounded-md">
-                {bolillosPerTray} pzas / charola
+              <span className="bg-amber-400 text-stone-950 font-black text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-xs font-mono">
+                <Lock className="w-3 h-3 text-stone-900" />
+                <span>12 pzas / charola (Fijo)</span>
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              {TRAY_OPTIONS.map(opt => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => handleSetTraySize(opt)}
-                  className={`text-xs font-black py-1 px-2.5 rounded-lg transition-all cursor-pointer ${
-                    bolillosPerTray === opt
-                      ? 'bg-amber-400 text-stone-950 shadow-sm scale-105'
-                      : 'bg-white/10 hover:bg-white/20 text-white'
-                  }`}
-                >
-                  {opt} pz
-                </button>
-              ))}
-              <div className="flex items-center gap-1 pl-1">
-                <input
-                  type="number"
-                  min="10"
-                  max="50"
-                  value={bolillosPerTray}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val > 0) handleSetTraySize(val);
-                  }}
-                  className="w-12 bg-white/10 border border-white/20 text-white font-mono text-xs rounded-lg py-1 px-1.5 text-center focus:outline-hidden focus:border-amber-400"
-                  title="Número personalizado de piezas por charola"
-                />
-              </div>
-            </div>
+            <p className="text-[11px] text-amber-200/80 font-medium">
+              Estándar Panadería Santa Fé (12 bolillos por charola de horneado).
+            </p>
           </div>
         </div>
 
@@ -416,7 +382,8 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
       {/* Sub-navegación Visual de Secciones */}
       <div className="flex items-center gap-2 border-b border-stone-200 pb-2 overflow-x-auto">
         {[
-          { id: 'bolillo' as AnalyticsSubTab, label: '🥖 Bolillo por Charolas y Horas', desc: 'Producto ancla' },
+          { id: 'mas_vendidos' as AnalyticsSubTab, label: '🏆 Más Vendidos en Gráfica', desc: 'Por día, semana o mes y cantidad' },
+          { id: 'bolillo' as AnalyticsSubTab, label: '🥖 Bolillo por Charolas y Horas', desc: '12 pz / charola estándar fija' },
           { id: 'clima' as AnalyticsSubTab, label: '🌦️ Clima Zakia (CP 76269)', desc: weatherInfo ? `${weatherInfo.current.temperature}°C · ${weatherInfo.badgeText}` : 'Lluvia, frío y antojo' },
           { id: 'semana' as AnalyticsSubTab, label: '📅 Demanda Semanal (Lunes a Domingo)', desc: '¿Qué días hornear más?' },
           { id: 'tandas' as AnalyticsSubTab, label: '🔥 Plan de Tandas & Turnos', desc: 'Horarios de horneado caliente' },
@@ -439,6 +406,16 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
           </button>
         ))}
       </div>
+
+      {/* ========================================================================= */}
+      {/* PESTAÑA 0: PRODUCTOS MÁS VENDIDOS EN GRÁFICA (DÍA, SEMANA, MES & CANTIDAD) */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'mas_vendidos' && (
+        <ProductRankingChart 
+          tickets={showSimulation ? generateSampleWeekTickets(todayStr) : tickets} 
+          bolillosPerTray={bolillosPerTray} 
+        />
+      )}
 
       {/* ========================================================================= */}
       {/* PESTAÑA CLIMA: PRONÓSTICO METEOROLÓGICO & DEMANDA DE PAN EN ZAKIA CP 76269 */}
