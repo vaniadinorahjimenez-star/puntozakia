@@ -692,10 +692,12 @@ export function mergeTickets(existing: SaleTicket[], incoming: SaleTicket[]): Sa
   }
 
   return Array.from(map.values()).sort((a, b) => {
-    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00:00'}`).getTime();
-    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00:00'}`).getTime();
-    if (isNaN(timeA) || isNaN(timeB)) return 0;
-    return timeB - timeA;
+    const timeA = a.timestamp ? new Date(a.timestamp).getTime() : (a.date ? new Date(`${a.date}T${a.time || '00:00:00'}`).getTime() : 0);
+    const timeB = b.timestamp ? new Date(b.timestamp).getTime() : (b.date ? new Date(`${b.date}T${b.time || '00:00:00'}`).getTime() : 0);
+    const validA = isNaN(timeA) ? 0 : timeA;
+    const validB = isNaN(timeB) ? 0 : timeB;
+    if (validA !== validB) return validB - validA;
+    return (b.folio || b.id || '').localeCompare(a.folio || a.id || '');
   });
 }
 
@@ -1128,12 +1130,18 @@ export function generateShiftCutWhatsAppMessage(cut: ShiftCutRecord, settings: S
     text += `ℹ️ _(Quedan $${cut.nextShiftCash}.00 en caja para cambio del sig. turno)_\n`;
   }
   if (cut.actualCashInDrawer !== undefined) {
-    text += `💵 Conteo Físico Real: $${cut.actualCashInDrawer}.00\n`;
-    if (cut.nextShiftCash !== undefined && cut.nextShiftCash > 0) {
-      text += `💰 Real a Retirar: $${Math.max(0, cut.actualCashInDrawer - cut.nextShiftCash)}.00\n`;
+    text += `💵 Efectivo Físico Contado: $${cut.actualCashInDrawer}.00\n`;
+    text += `💻 Efectivo según Sistema: $${cut.expectedCashInDrawer}.00\n`;
+    const diff = cut.difference !== undefined ? cut.difference : (cut.actualCashInDrawer - cut.expectedCashInDrawer);
+    if (diff === 0) {
+      text += `⚖️ Cuadre de Caja: ✅ CAJA CUADRADA EXACTA ($0.00)\n`;
+    } else if (diff > 0) {
+      text += `⚖️ Cuadre de Caja: 🟢 SOBRANTE EN CAJA: +$${diff}.00\n`;
+    } else {
+      text += `⚖️ Cuadre de Caja: 🔴 FALTANTE EN CAJA: -$${Math.abs(diff)}.00\n`;
     }
-    if (cut.difference !== undefined && cut.difference !== 0) {
-      text += `⚖️ Diferencia: ${cut.difference > 0 ? `+$${cut.difference}.00 (Sobrante)` : `-$${Math.abs(cut.difference)}.00 (Faltante)`}\n`;
+    if (cut.nextShiftCash !== undefined && cut.nextShiftCash > 0) {
+      text += `💰 Efectivo Real a Entregar al Patrón: $${Math.max(0, cut.actualCashInDrawer - cut.nextShiftCash)}.00\n`;
     }
   }
   if (cut.notes) {

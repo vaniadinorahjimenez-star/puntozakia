@@ -105,6 +105,22 @@ export const ThermalShiftCutTicket: React.FC<ThermalShiftCutTicketProps> = ({
                     <span className="font-mono font-bold">-${cut.nextShiftCash}.00</span>
                   </div>
                 )}
+                {(cut.actualCashInDrawer !== undefined) && (
+                  <div className="flex items-baseline justify-between text-xs text-amber-200 pt-1 border-t border-white/10">
+                    <span>Efectivo Contado (Físico):</span>
+                    <span className="font-mono font-black">${cut.actualCashInDrawer}.00</span>
+                  </div>
+                )}
+                {(cut.difference !== undefined) && (
+                  <div className={`flex items-baseline justify-between text-xs font-black ${
+                    cut.difference === 0 ? 'text-emerald-300' : cut.difference > 0 ? 'text-teal-300' : 'text-rose-300'
+                  }`}>
+                    <span>Cuadre / Diferencia:</span>
+                    <span className="font-mono">
+                      {cut.difference === 0 ? '✅ $0.00 (Cuadrada)' : cut.difference > 0 ? `🟢 +$${cut.difference}.00 (Sobrante)` : `🔴 -$${Math.abs(cut.difference)}.00 (Faltante)`}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-baseline justify-between pt-1 border-t border-white/10">
                   <span className="text-xs text-emerald-300 font-black uppercase tracking-wider">A Entregar:</span>
                   <span className="text-2xl font-black text-emerald-400 font-mono">
@@ -386,19 +402,27 @@ export const ThermalShiftCutTicket: React.FC<ThermalShiftCutTicketProps> = ({
               {cut.actualCashInDrawer !== undefined && (
                 <div className="pt-1 text-[10.5px] border-t border-dashed border-black/60 space-y-0.5">
                   <div className="flex justify-between">
-                    <span>Efectivo Contado en Cajon:</span>
+                    <span>EFECTIVO CONTADO FISICO:</span>
                     <span>${cut.actualCashInDrawer}.00</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>EFECTIVO SEGUN SISTEMA:</span>
+                    <span>${cut.expectedCashInDrawer}.00</span>
+                  </div>
+                  <div className="flex justify-between font-black">
+                    <span>CUADRE / DIFERENCIA:</span>
+                    <span>
+                      {cut.difference === 0 
+                        ? 'CUADRADA EXACTA ($0.00)' 
+                        : (cut.difference && cut.difference > 0)
+                          ? `+$${cut.difference}.00 (SOBRANTE)`
+                          : `-$${Math.abs(cut.difference || (cut.actualCashInDrawer - cut.expectedCashInDrawer))}.00 (FALTANTE)`}
+                    </span>
                   </div>
                   {(cut.nextShiftCash !== undefined && cut.nextShiftCash > 0) && (
                     <div className="flex justify-between">
-                      <span>Efectivo Real a Retirar:</span>
+                      <span>EFECTIVO REAL A RETIRAR:</span>
                       <span>${Math.max(0, cut.actualCashInDrawer - cut.nextShiftCash)}.00</span>
-                    </div>
-                  )}
-                  {cut.difference !== undefined && cut.difference !== 0 && (
-                    <div className="flex justify-between">
-                      <span>Diferencia:</span>
-                      <span>{cut.difference > 0 ? `+$${cut.difference}.00 (Sobrante)` : `-$${Math.abs(cut.difference)}.00 (Faltante)`}</span>
                     </div>
                   )}
                 </div>

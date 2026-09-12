@@ -182,6 +182,10 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     1: 0
   });
 
+  // Manual Cash Count State (entrada manual directa del efectivo físico)
+  const [manualCashInput, setManualCashInput] = useState<string>('');
+  const [isManualCashActive, setIsManualCashActive] = useState<boolean>(false);
+
   // Observations / Notes
   const [notes, setNotes] = useState<string>('');
 
@@ -304,7 +308,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     return Math.max(0, expectedCashInDrawer - (nextShiftCash || 0));
   }, [expectedCashInDrawer, nextShiftCash]);
 
-  // Counted Cash
+  // Counted Cash from denomination breakdown
   const actualCashCounted = useMemo(() => {
     return Object.entries(cashDenominations).reduce((sum, [denom, count]) => {
       const countNum = typeof count === 'number' ? count : Number(count || 0);
@@ -312,8 +316,25 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     }, 0);
   }, [cashDenominations]);
 
-  const cashDifference = actualCashCounted > 0 ? actualCashCounted - expectedCashInDrawer : 0;
-  const actualCashToDeliver = actualCashCounted > 0 ? Math.max(0, actualCashCounted - (nextShiftCash || 0)) : 0;
+  // Effective Physical Cash: Either manually typed or summed from denominations
+  const effectiveActualCash = useMemo(() => {
+    if (isManualCashActive) {
+      const parsed = parseFloat(manualCashInput);
+      return isNaN(parsed) ? 0 : Math.max(0, parsed);
+    }
+    return actualCashCounted;
+  }, [isManualCashActive, manualCashInput, actualCashCounted]);
+
+  const hasEnteredActualCash = isManualCashActive 
+    ? (manualCashInput.trim() !== '' && !isNaN(parseFloat(manualCashInput)))
+    : actualCashCounted > 0;
+
+  // Discrepancia: Dinero físico contado vs lo que marca el sistema
+  // > 0 = Sobrante, < 0 = Faltante, === 0 = Cuadre exacto
+  const cashDifference = hasEnteredActualCash ? (effectiveActualCash - expectedCashInDrawer) : 0;
+  const actualCashToDeliver = hasEnteredActualCash 
+    ? Math.max(0, effectiveActualCash - (nextShiftCash || 0)) 
+    : cashToDeliver;
 
   // Add Outflow Handler
   const handleAddOutflow = (e?: React.FormEvent) => {
@@ -391,9 +412,9 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
       totalOutflows,
       expectedCashInDrawer,
       nextShiftCash,
-      cashToDeliver,
-      actualCashInDrawer: actualCashCounted > 0 ? actualCashCounted : undefined,
-      difference: actualCashCounted > 0 ? cashDifference : undefined,
+      cashToDeliver: hasEnteredActualCash ? actualCashToDeliver : cashToDeliver,
+      actualCashInDrawer: hasEnteredActualCash ? effectiveActualCash : undefined,
+      difference: hasEnteredActualCash ? cashDifference : undefined,
       notes: notes.trim() || undefined,
       createdAt: new Date().toISOString()
     };
@@ -1152,9 +1173,138 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                   <span className="font-bold font-mono">-${totalOutflows}.00</span>
                 </div>
                 <div className="flex justify-between items-center text-slate-800 pt-1 border-t border-dashed border-amber-300 font-extrabold">
-                  <span>(=) Total Efectivo Físico en Cajón:</span>
-                  <span className="font-mono text-sm font-black">${expectedCashInDrawer}.00</span>
+                  <span>(=) Total Efectivo que DEBE HABER (Sistema):</span>
+                  <span className="font-mono text-sm font-black bg-amber-100/70 px-2 py-0.5 rounded border border-amber-300">${expectedCashInDrawer}.00</span>
                 </div>
+
+                {/* MODIFICACIÓN SOLICITADA: Entrada Manual de Efectivo Real y Cuadre de Diferencia */}
+                <div className="mt-3 p-3.5 bg-white rounded-2xl border-2 border-[#D95D39]/40 shadow-xs space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-slate-100">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+                        <Banknote className="w-4 h-4 text-emerald-600" />
+                        <span>EFECTIVO FÍSICO REAL EN CAJA (CONTEO MANUAL)</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-bold">
+                        Escribe cuánto dinero contaron físicamente para calcular sobrante o faltante
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep(650, 'sine', 0.03);
+                          setIsManualCashActive(true);
+                          setManualCashInput(expectedCashInDrawer.toString());
+                        }}
+                        className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[10px] font-black cursor-pointer shadow-2xs"
+                        title="Copiar exactamente lo que marca el sistema"
+                      >
+                        📋 Copiar Esperado (${expectedCashInDrawer})
+                      </button>
+                      {hasEnteredActualCash && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playBeep(450, 'sine', 0.03);
+                            setManualCashInput('');
+                            setIsManualCashActive(false);
+                            setCashDenominations({ 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 2: 0, 1: 0 });
+                          }}
+                          className="px-2 py-1 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-300 rounded-lg text-[10px] font-bold cursor-pointer"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Input Principal de Efectivo Manual */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                    <div className="sm:col-span-7">
+                      <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                        Total de dinero contado en mano / cajón:
+                      </label>
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 font-black text-emerald-600 text-lg sm:text-xl font-mono">$</span>
+                        <input
+                          type="number"
+                          id="shift-actual-cash-input"
+                          step="1"
+                          min="0"
+                          placeholder={`Ej. ${expectedCashInDrawer}`}
+                          value={isManualCashActive ? manualCashInput : (actualCashCounted > 0 ? actualCashCounted : '')}
+                          onChange={(e) => {
+                            setIsManualCashActive(true);
+                            setManualCashInput(e.target.value);
+                          }}
+                          className="w-full pl-8 pr-3 py-2 bg-emerald-50/40 focus:bg-white rounded-xl text-lg sm:text-xl font-black text-slate-900 border-2 border-emerald-400 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono shadow-2xs transition-colors"
+                        />
+                      </div>
+
+                      {/* Botones rápidos de ajuste */}
+                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                        <span className="text-[9.5px] font-bold text-slate-400 mr-1">Rápidos:</span>
+                        {[50, 100, 200, 500].map((addAmount) => (
+                          <button
+                            key={addAmount}
+                            type="button"
+                            onClick={() => {
+                              playBeep(700, 'sine', 0.02);
+                              const currentVal = parseFloat(manualCashInput) || 0;
+                              setManualCashInput((currentVal + addAmount).toString());
+                              setIsManualCashActive(true);
+                            }}
+                            className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-black text-[10px] rounded cursor-pointer"
+                          >
+                            +{addAmount}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Tarjeta de Diferencia / Cuadre */}
+                    <div className="sm:col-span-5">
+                      {hasEnteredActualCash ? (
+                        <div className={`p-3 rounded-xl border-2 transition-all ${
+                          cashDifference === 0
+                            ? 'bg-emerald-100/90 border-emerald-500 text-emerald-950'
+                            : cashDifference > 0
+                              ? 'bg-teal-50 border-teal-400 text-teal-950 ring-2 ring-teal-300/40'
+                              : 'bg-rose-100/90 border-rose-500 text-rose-950 ring-2 ring-rose-300/40'
+                        }`}>
+                          <div className="text-[10px] font-black uppercase tracking-wider flex items-center justify-between">
+                            <span>{cashDifference === 0 ? '✅ CAJA CUADRADA' : cashDifference > 0 ? '🟢 SOBRANTE EN CAJA' : '🔴 FALTANTE EN CAJA'}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded font-black bg-white/70">
+                              {cashDifference === 0 ? 'Exacto' : cashDifference > 0 ? 'Sobra' : 'Falta'}
+                            </span>
+                          </div>
+
+                          <div className="text-xl sm:text-2xl font-black font-mono mt-1 tracking-tight">
+                            {cashDifference === 0 
+                              ? '$0.00' 
+                              : cashDifference > 0 
+                                ? `+$${cashDifference}.00` 
+                                : `-$${Math.abs(cashDifference)}.00`}
+                          </div>
+
+                          <div className="text-[9.5px] mt-1 font-bold leading-tight">
+                            {cashDifference === 0 && '¡Perfecto! El dinero contado coincide al 100% con el sistema.'}
+                            {cashDifference > 0 && `Hay $${cashDifference}.00 de más en el cajón respecto a las ventas del sistema.`}
+                            {cashDifference < 0 && `Faltan $${Math.abs(cashDifference)}.00 en el cajón respecto a lo que marca el sistema.`}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-slate-50 rounded-xl border border-dashed border-slate-300 text-slate-500 text-[11px] leading-snug">
+                          <span className="font-bold block text-slate-700">⏳ Sin conteo manual aún</span>
+                          Escribe el monto en el recuadro para ver la diferencia (sobrante o faltante).
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center text-indigo-950 font-black bg-indigo-100/70 px-2.5 py-1.5 rounded-xl border border-indigo-200">
                   <span className="flex items-center gap-1.5">
                     <span>(-) Se DEJA en Caja para Siguiente Turno (Descuento):</span>
@@ -1170,12 +1320,27 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                       EFECTIVO NETO A RETIRAR / ENTREGAR AL DUEÑO:
                     </span>
                     <span className="text-[11px] text-slate-600 block mt-0.5">
-                      (Dinero que se saca para el sobre o entrega al patrón. En el cajón se quedan <strong className="text-indigo-900 font-mono">${nextShiftCash}.00</strong>)
+                      {hasEnteredActualCash ? (
+                        <>
+                          (Basado en efectivo real contado: <strong className="text-slate-900 font-mono">${effectiveActualCash}.00</strong> menos fondo sig. turno <strong className="text-indigo-900 font-mono">${nextShiftCash}.00</strong>)
+                        </>
+                      ) : (
+                        <>
+                          (Dinero que se saca para el sobre o entrega al patrón. En el cajón se quedan <strong className="text-indigo-900 font-mono">${nextShiftCash}.00</strong>)
+                        </>
+                      )}
                     </span>
+                    {hasEnteredActualCash && cashDifference !== 0 && (
+                      <span className={`text-[10px] font-black inline-block mt-1 px-2 py-0.5 rounded ${
+                        cashDifference > 0 ? 'bg-teal-100 text-teal-900' : 'bg-rose-100 text-rose-900'
+                      }`}>
+                        {cashDifference > 0 ? `Incluye sobrante de +$${cashDifference}.00` : `Afectado por faltante de -$${Math.abs(cashDifference)}.00`}
+                      </span>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <div className="text-3xl sm:text-4xl font-black text-emerald-700 font-mono tracking-tight">
-                      ${cashToDeliver}.00
+                      ${hasEnteredActualCash ? actualCashToDeliver : cashToDeliver}.00
                     </div>
                     <span className="text-[10px] font-bold text-slate-500 block">
                       Fondo en cajón: ${nextShiftCash}.00
@@ -1194,7 +1359,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
               >
                 <div className="flex items-center gap-1.5">
                   <Coins className="w-4 h-4 text-amber-600" />
-                  <span>¿Deseas contar billetes y monedas? (Arqueo Opcional)</span>
+                  <span>¿Deseas desglosar billete por billete y monedas? (Arqueo Detallado Opcional)</span>
                 </div>
                 <span className="text-slate-400 text-xs">{showCashBreakdown ? '▲ Ocultar' : '▼ Mostrar Conteo'}</span>
               </button>
@@ -1212,7 +1377,11 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                           value={cashDenominations[denom] || ''}
                           onChange={(e) => {
                             const val = parseInt(e.target.value, 10) || 0;
-                            setCashDenominations(prev => ({ ...prev, [denom]: val }));
+                            const updated = { ...cashDenominations, [denom]: val };
+                            setCashDenominations(updated);
+                            const totalDenom = Object.entries(updated).reduce((s, [d, c]) => s + (Number(d) * (Number(c) || 0)), 0);
+                            setIsManualCashActive(true);
+                            setManualCashInput(totalDenom.toString());
                           }}
                           className="w-full text-center text-xs font-black text-slate-900 border border-slate-300 rounded py-1 mt-1 focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                         />
@@ -1239,8 +1408,12 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
 
                       <div className="flex justify-between items-center pt-1 text-xs">
                         <span className="text-slate-700">Diferencia de Cajón vs Esperado:</span>
-                        <strong className={`font-mono text-sm ${cashDifference >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {cashDifference >= 0 ? `+$${cashDifference}.00 (Sobrante)` : `-$${Math.abs(cashDifference)}.00 (Faltante)`}
+                        <strong className={`font-mono text-sm ${cashDifference >= 0 ? (cashDifference === 0 ? 'text-emerald-600' : 'text-teal-600') : 'text-rose-600'}`}>
+                          {cashDifference === 0 
+                            ? '$0.00 (Caja Cuadrada)' 
+                            : cashDifference > 0 
+                              ? `+$${cashDifference}.00 (Sobrante)` 
+                              : `-$${Math.abs(cashDifference)}.00 (Faltante)`}
                         </strong>
                       </div>
                     </div>

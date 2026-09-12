@@ -260,6 +260,10 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Cash Change Calculator state for the ticket panel
   const [cashGivenInput, setCashGivenInput] = useState<string>('');
+  const [showCashNumpad, setShowCashNumpad] = useState<boolean>(false);
+
+  // Registro en tiempo real inmediato de tickets cobrados en este mostrador
+  const [recentlyCreatedTickets, setRecentlyCreatedTickets] = useState<SaleTicket[]>([]);
 
   // Quick bill denominations for change calculation (Mexican Banknotes)
   const quickBills = [
@@ -408,6 +412,55 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const numericCashGiven = parseFloat(cashGivenInput) || 0;
   const calculatedPosChange = numericCashGiven >= total ? numericCashGiven - total : 0;
   const cashShortage = (numericCashGiven > 0 && numericCashGiven < total) ? total - numericCashGiven : 0;
+
+  // Función auxiliar robusta para extraer milisegundos de cualquier ticket
+  const getTicketTimestampMs = (t: SaleTicket): number => {
+    if (t.timestamp) {
+      const ms = new Date(t.timestamp).getTime();
+      if (!isNaN(ms) && ms > 0) return ms;
+    }
+    if (t.date) {
+      const ms = new Date(`${t.date}T${t.time || '00:00:00'}`).getTime();
+      if (!isNaN(ms) && ms > 0) return ms;
+    }
+    const match = (t.id || '').match(/\d{10,13}/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (parsed > 1000000000) return parsed;
+    }
+    return 0;
+  };
+
+  // Últimos 2 cobros registrados en TIEMPO REAL para verificación inmediata del personal de mostrador
+  const recent2Tickets = React.useMemo(() => {
+    const map = new Map<string, SaleTicket>();
+
+    // 1. Incorporar los tickets cobrados al instante en esta sesión (prioridad inmediata)
+    for (const t of recentlyCreatedTickets) {
+      if (t && (t.id || t.folio)) {
+        map.set(t.id || t.folio, t);
+      }
+    }
+
+    // 2. Incorporar los tickets provistos por almacenamiento general
+    for (const t of tickets || []) {
+      if (t && (t.id || t.folio)) {
+        const key = t.id || t.folio;
+        if (!map.has(key)) {
+          map.set(key, t);
+        }
+      }
+    }
+
+    return Array.from(map.values())
+      .sort((a, b) => {
+        const timeA = getTicketTimestampMs(a);
+        const timeB = getTicketTimestampMs(b);
+        if (timeA !== timeB) return timeB - timeA;
+        return (b.folio || b.id || '').localeCompare(a.folio || a.id || '');
+      })
+      .slice(0, 2);
+  }, [recentlyCreatedTickets, tickets]);
 
   // Points that will be earned in this purchase ($20 pesos = 1 point)
   const pointsEarned = Math.floor(total / (settings.loyaltyPointsPerPesos || 20));
@@ -730,6 +783,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     }
 
     onSaveTicket(newTicket, updatedCust);
+    // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
+    setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
 
     // Mandar DIRECTO a impresión térmica sin ventana secundaria
     setDirectPrintTicket(newTicket);
@@ -811,6 +866,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     }
 
     onSaveTicket(newTicket, updatedCust);
+    // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
+    setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
 
     // Trigger Donut animation popup
     setCelebrationData({
@@ -895,6 +952,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     }
 
     onSaveTicket(newTicket, updatedCust);
+    // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
+    setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
     setShowZettleModal(false);
 
     // Mandar directo a impresión térmica sin abrir modal secundario
@@ -1616,6 +1675,95 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               </button>
             </div>
           </div>
+
+          {/* MODIFICACIÓN SOLICITADA: Listado ultra compacto de los últimos 2 registros cobrados (para caber en una sola ventana) */}
+          <div className="bg-white rounded-xl p-1.5 shadow-2xs border border-slate-200 space-y-1">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <Receipt className="w-3.5 h-3.5 text-[#D95D39]" />
+                <span className="text-[11px] font-black text-slate-900 tracking-tight">
+                  ÚLTIMOS 2 COBROS
+                </span>
+                <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
+                  En vivo
+                </span>
+              </div>
+              <span className="text-[9.5px] font-bold text-slate-400">
+                Verificación inmediata
+              </span>
+            </div>
+
+            {recent2Tickets.length === 0 ? (
+              <div className="py-1 px-2 bg-slate-50 rounded-lg text-center border border-dashed border-slate-200">
+                <span className="text-[10px] font-bold text-slate-500">
+                  Aún no hay cobros en este turno. Al cobrar aparecerán aquí los últimos 2 tickets.
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {recent2Tickets.map((tk, idx) => {
+                  const piecesCount = tk.items.reduce((sum, item) => sum + item.quantity, 0);
+                  const isCard = tk.paymentMethod === 'tarjeta';
+                  const isPoints = tk.paymentMethod === 'puntos';
+
+                  // Resumen conciso de productos
+                  const itemSummary = tk.items
+                    .map(it => `${it.quantity} ${it.name.replace(/\s*\$\d+.*$/, '')}`)
+                    .join(', ');
+
+                  return (
+                    <div
+                      key={tk.id || `recent-tk-${idx}`}
+                      className="bg-slate-50/70 hover:bg-amber-50/50 px-2 py-1 rounded-lg border border-slate-200 hover:border-amber-300 transition-colors flex items-center justify-between gap-1.5 h-7.5"
+                    >
+                      {/* Izquierda: Folio, Hora, Método, y Resumen en una sola línea */}
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-[9.5px] font-black font-mono text-slate-800 bg-white px-1 py-0.2 rounded border border-slate-200 shrink-0">
+                          #{tk.folio}
+                        </span>
+                        <span className="text-[9.5px] font-bold font-mono text-slate-500 shrink-0">
+                          {tk.time}
+                        </span>
+                        <span className={`px-1 py-0.2 rounded text-[8.5px] font-black border shrink-0 ${
+                          isCard 
+                            ? 'bg-blue-50 text-blue-800 border-blue-200' 
+                            : isPoints 
+                              ? 'bg-amber-50 text-amber-800 border-amber-200' 
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        }`}>
+                          {isCard ? 'Tarjeta' : isPoints ? 'Puntos' : 'Efec'}
+                        </span>
+                        <span className="text-[10px] text-slate-600 font-medium truncate" title={itemSummary}>
+                          {itemSummary || 'Pan surtido'}
+                        </span>
+                      </div>
+
+                      {/* Derecha: Piezas, Total en pesos y Botón Reimprimir */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[9px] font-bold text-amber-900 bg-amber-100/70 px-1 py-0.2 rounded font-mono">
+                          {piecesCount} pz
+                        </span>
+                        <span className="text-xs font-black font-mono text-slate-950">
+                          ${tk.total}.00
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playBeep(650, 'sine', 0.03);
+                            setCompletedTicket(tk);
+                          }}
+                          className="p-1 bg-white hover:bg-amber-100 active:bg-amber-200 text-slate-700 hover:text-amber-950 rounded border border-slate-200 hover:border-amber-300 cursor-pointer shadow-2xs transition-colors"
+                          title="Ver o reimprimir ticket térmico"
+                        >
+                          <Printer className="w-3 h-3 text-[#D95D39]" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT COLUMN: Club de Puntos + Live Ticket Preview + Checkout (42% width, col-span-5) */}
@@ -1975,18 +2123,22 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                     })}
                   </div>
 
-                  {/* Entrada manual de billete recibido */}
+                  {/* Entrada manual de billete recibido (Abre ventana emergente al hacer clic) */}
                   <div className="flex items-center gap-1.5">
                     <div className="relative flex-1">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500">$</span>
                       <input
                         id="custom-cash-input-field"
-                        type="number"
+                        type="text"
+                        readOnly
                         placeholder="Otro billete..."
-                        value={cashGivenInput}
-                        onChange={(e) => setCashGivenInput(e.target.value)}
-                        className="w-full pl-5 pr-2 py-0.5 h-6.5 bg-white rounded-md text-xs font-black font-mono border border-amber-300 focus:outline-none focus:ring-1 focus:ring-[#D95D39] text-slate-900"
-                        title="Escribe cualquier monto recibido"
+                        value={cashGivenInput ? `$${cashGivenInput}.00` : ''}
+                        onClick={() => {
+                          playBeep(600, 'sine', 0.03);
+                          setShowCashNumpad(true);
+                        }}
+                        className="w-full pl-5 pr-2 py-0.5 h-6.5 bg-white hover:bg-amber-50/60 rounded-md text-xs font-black font-mono border border-amber-300 focus:outline-none focus:ring-1 focus:ring-[#D95D39] text-slate-900 cursor-pointer transition-colors shadow-2xs"
+                        title="Toca para ingresar otro billete"
                       />
                     </div>
 
@@ -3736,6 +3888,181 @@ export const PosCounter: React.FC<PosCounterProps> = ({
           onPaymentApproved={(cardDetails) => handleCardCheckout(cardDetails)}
           onConfirmCardPayment={(cardDetails) => handleCardCheckout(cardDetails)}
         />
+      )}
+
+      {/* Ventana Emergente (Modal): Teclado Virtual para Cambio ("Otro Billete") */}
+      {showCashNumpad && (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
+          onClick={() => setShowCashNumpad(false)}
+        >
+          <div 
+            className="bg-slate-900 text-white w-full max-w-sm rounded-2xl shadow-2xl border-2 border-amber-400 p-4 space-y-3 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Cabecera con botón cerrar */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+                  <Banknote className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white leading-tight">
+                    ¿Con cuánto pagan?
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    Total a cobrar: <strong className="text-amber-300 font-mono">${total}.00</strong>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(450, 'sine', 0.03);
+                  setShowCashNumpad(false);
+                }}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                title="Cerrar ventana"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Visor digital con Pago Recibido y Cambio */}
+            <div className="grid grid-cols-2 gap-2 bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                  Monto Recibido
+                </span>
+                <span className="text-2xl font-black font-mono text-emerald-400 tracking-tight">
+                  ${cashGivenInput || '0'}.00
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                  {numericCashGiven >= total ? 'Cambio a dar' : 'Falta cubrir'}
+                </span>
+                <span className={`text-2xl font-black font-mono tracking-tight ${
+                  numericCashGiven >= total ? 'text-amber-300' : 'text-rose-400'
+                }`}>
+                  {numericCashGiven >= total ? `$${calculatedPosChange}.00` : `-$${cashShortage}.00`}
+                </span>
+              </div>
+            </div>
+
+            {/* Billetes rápidos de suma (+20, +50, +100, +200) y botón Exacto */}
+            <div className="grid grid-cols-5 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(750, 'sine', 0.03);
+                  setCashGivenInput(total.toString());
+                }}
+                className="py-1.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-lg font-black font-mono text-xs cursor-pointer active:scale-95 transition-all text-center shadow-xs"
+                title="Cobrar importe exacto"
+              >
+                Exacto
+              </button>
+              {[20, 50, 100, 200].map((billAdd) => (
+                <button
+                  key={billAdd}
+                  type="button"
+                  onClick={() => {
+                    playBeep(700, 'sine', 0.02);
+                    const current = parseFloat(cashGivenInput) || 0;
+                    setCashGivenInput((current + billAdd).toString());
+                  }}
+                  className="py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-amber-600 border border-slate-700 text-amber-300 rounded-lg font-black font-mono text-xs cursor-pointer active:scale-95 transition-all text-center"
+                  title={`Sumar billete de $${billAdd}`}
+                >
+                  +{billAdd}
+                </button>
+              ))}
+            </div>
+
+            {/* Teclado numérico táctil (1-9, C, 0, ⌫) */}
+            <div className="grid grid-cols-3 gap-2">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                <button
+                  key={digit}
+                  type="button"
+                  onClick={() => {
+                    playBeep(600 + digit * 20, 'sine', 0.02);
+                    setCashGivenInput(prev => `${prev}${digit}`);
+                  }}
+                  className="h-11 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 rounded-xl font-black font-mono text-lg text-white border border-slate-700 cursor-pointer active:scale-95 transition-all shadow-xs flex items-center justify-center"
+                >
+                  {digit}
+                </button>
+              ))}
+
+              {/* Fila inferior: C, 0, ⌫ */}
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(400, 'sine', 0.03);
+                  setCashGivenInput('');
+                }}
+                className="h-11 bg-rose-950/80 hover:bg-rose-900 active:bg-rose-800 text-rose-200 rounded-xl font-black text-sm border border-rose-800 cursor-pointer active:scale-95 transition-all flex items-center justify-center"
+                title="Borrar todo"
+              >
+                C
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(600, 'sine', 0.02);
+                  setCashGivenInput(prev => (prev ? `${prev}0` : '0'));
+                }}
+                className="h-11 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 rounded-xl font-black font-mono text-lg text-white border border-slate-700 cursor-pointer active:scale-95 transition-all flex items-center justify-center"
+              >
+                0
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(550, 'sine', 0.02);
+                  setCashGivenInput(prev => prev.slice(0, -1));
+                }}
+                className="h-11 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-200 rounded-xl font-black text-sm border border-slate-600 cursor-pointer active:scale-95 transition-all flex items-center justify-center"
+                title="Retroceso"
+              >
+                <Delete className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Fila inferior de acciones: 00 y Listo */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(620, 'sine', 0.02);
+                  if (cashGivenInput) {
+                    setCashGivenInput(prev => `${prev}00`);
+                  }
+                }}
+                className="py-2 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 text-amber-200 rounded-xl font-black font-mono text-sm border border-slate-700 cursor-pointer active:scale-95 transition-all text-center"
+              >
+                00 (Ceros)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep(750, 'triangle', 0.05);
+                  setShowCashNumpad(false);
+                }}
+                className="py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-black text-sm border border-emerald-500 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1.5 shadow-md"
+              >
+                <Check className="w-4 h-4" />
+                <span>Listo</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
