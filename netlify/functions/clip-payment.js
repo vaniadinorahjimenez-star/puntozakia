@@ -203,6 +203,65 @@ exports.handler = async (event) => {
     }
 
     // -------------------------------------------------------------
+    // ACCIÓN: VERIFICAR ESTADO EN VIVO DE LA TERMINAL (DEVICES STATUS)
+    // -------------------------------------------------------------
+    if (action === 'check_device_status' || action === 'device_status') {
+      if (!authHeaderValue) {
+        return {
+          statusCode: 400,
+          headers: CORS_HEADERS,
+          body: JSON.stringify({ error: 'MISSING_CREDENTIALS', message: 'Faltan credenciales de Clip' })
+        };
+      }
+
+      try {
+        const devicesRes = await fetch(CLIP_DEVICES_URL, {
+          method: 'GET',
+          headers: {
+            'Authorization': authHeaderValue,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const devicesData = await devicesRes.json().catch(() => ([]));
+        let targetDevice = null;
+        if (Array.isArray(devicesData)) {
+          targetDevice = devicesData.find(d => 
+            (d.serial_number || d.serial_number_pos || '').toUpperCase() === serialNumber.toUpperCase()
+          );
+        }
+
+        return {
+          statusCode: 200,
+          headers: CORS_HEADERS,
+          body: JSON.stringify({
+            registered: Boolean(targetDevice),
+            status: targetDevice ? targetDevice.status : 'not_found',
+            model: targetDevice?.device_model || 'P8',
+            app_version: targetDevice?.app_version,
+            last_seen_at: targetDevice?.ua_last_seen_at,
+            device: targetDevice,
+            message: targetDevice
+              ? (targetDevice.status === 'expired'
+                  ? `Terminal ${serialNumber} registrada pero con sesión en reposo (expired). Abre la app Clip PinPad en la pantalla física.`
+                  : `Terminal ${serialNumber} activa (${targetDevice.status}).`)
+              : `Terminal ${serialNumber} no encontrada en la lista de dispositivos.`
+          })
+        };
+      } catch (err) {
+        return {
+          statusCode: 200,
+          headers: CORS_HEADERS,
+          body: JSON.stringify({
+            registered: false,
+            status: 'error',
+            message: err.message
+          })
+        };
+      }
+    }
+
+    // -------------------------------------------------------------
     // ACCIÓN: CONSULTAR ESTADO DE PAGO EN LA TERMINAL (POLLING REAL)
     // -------------------------------------------------------------
     if (action === 'check_status') {
@@ -352,27 +411,44 @@ exports.handler = async (event) => {
             };
           }
 
-          // 3. Terminal apagada o sin conexión Wi-Fi (503, 504, 408)
-          const isOffline = 
+          // 3. Terminal apagada, app Pinpad cerrada o socket no vinculado (ERR10_03, ERR10_04, DEVICE_UNAVAILABLE, 503, 504, 408)
+          const isOfflineOrClosed = 
+            rawCode === 'ERR10_04' ||
+            rawCode === 'ERR10_03' ||
+            rawCode === 'DEVICE_UNAVAILABLE' ||
+            rawCode === 'PINPAD_OFFLINE' ||
             response.status === 503 || 
             response.status === 504 || 
             response.status === 408 ||
+            lowerMsg.includes('unable to connect to pinpad terminal') ||
+            lowerMsg.includes('pinpad application is closed') ||
+            lowerMsg.includes('terminal not available') ||
             lowerMsg.includes('offline') || 
             lowerMsg.includes('unavailable') || 
             lowerMsg.includes('unreachable') || 
             lowerMsg.includes('timeout') ||
-            lowerMsg.includes('no connection') ||
-            rawCode === 'DEVICE_UNAVAILABLE' ||
-            rawCode === 'PINPAD_OFFLINE';
+            lowerMsg.includes('no connection');
 
-          if (isOffline) {
+          if (isOfflineOrClosed) {
+            const isSocketWait = rawCode === 'ERR10_03' || lowerMsg.includes('unable to connect to pinpad');
+            const isAppClosed = rawCode === 'ERR10_04' || lowerMsg.includes('pinpad application is closed') || lowerMsg.includes('closed');
+            
+            let descriptiveMessage = `La terminal Clip ${serialNumber} no responde vía Wi-Fi.`;
+            if (isSocketWait) {
+              descriptiveMessage = `Tu terminal Clip ${serialNumber} está activa en línea, pero la aplicación de integración PinPad aún no recibe órdenes automáticas (Código ERR10_03). Abre la app Clip PinPad en la terminal o usa Cobro Directo mientras tanto.`;
+            } else if (isAppClosed) {
+              descriptiveMessage = `La aplicación Clip PinPad en la terminal ${serialNumber} está cerrada o en reposo (ERR10_04). Abre la app Clip PinPad en la pantalla física para activarla.`;
+            }
+
             return {
-              statusCode: 503,
+              statusCode: response.status || 400,
               headers: CORS_HEADERS,
               body: JSON.stringify({
-                error: 'TERMINAL_OFFLINE',
+                error: isSocketWait ? 'PINPAD_APP_NOT_LISTENING' : (isAppClosed ? 'PINPAD_APP_CLOSED' : 'TERMINAL_OFFLINE'),
+                clip_code: rawCode,
                 http_status: response.status,
-                message: `La terminal Clip ${serialNumber} no responde vía Wi-Fi. Verifica que esté encendida con pantalla activa y conectada a internet.`,
+                message: descriptiveMessage,
+                official_clip_message: rawMsg,
                 details: responseData
               })
             };

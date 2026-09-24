@@ -119,6 +119,46 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                 }
               }
 
+              // ACCIÓN: CHECK DEVICE STATUS (ESTADO EN VIVO DE LA TERMINAL)
+              if (action === 'check_device_status' || action === 'device_status') {
+                if (!authHeader) {
+                  res.writeHead(400, headers);
+                  return res.end(JSON.stringify({ error: 'MISSING_CREDENTIALS', message: 'Faltan credenciales de Clip' }));
+                }
+
+                try {
+                  const clipRes = await fetch('https://api.payclip.io/f2f/pinpad/v1/devices/status', {
+                    method: 'GET',
+                    headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' }
+                  });
+                  const clipData = await clipRes.json().catch(() => ([]));
+                  let targetDevice = null;
+                  if (Array.isArray(clipData)) {
+                    targetDevice = clipData.find((d: any) => 
+                      (d.serial_number || d.serial_number_pos || '').toUpperCase() === serial.toUpperCase()
+                    );
+                  }
+
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({
+                    registered: Boolean(targetDevice),
+                    status: targetDevice ? targetDevice.status : 'not_found',
+                    model: targetDevice?.device_model || 'P8',
+                    app_version: targetDevice?.app_version,
+                    last_seen_at: targetDevice?.ua_last_seen_at,
+                    device: targetDevice,
+                    message: targetDevice
+                      ? (targetDevice.status === 'expired'
+                          ? `Terminal ${serial} registrada pero con sesión en reposo (expired). Abre la app Clip PinPad en la pantalla física.`
+                          : `Terminal ${serial} activa (${targetDevice.status}).`)
+                      : `Terminal ${serial} no encontrada en la lista de dispositivos.`
+                  }));
+                } catch (e: any) {
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({ registered: false, status: 'error', message: e.message }));
+                }
+              }
+
               // ACCIÓN: CHECK STATUS (POLLING REAL)
               if (action === 'check_status') {
                 const reqId = payload.pinpad_request_id;
@@ -170,17 +210,29 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
 
               if (!clipRes.ok) {
                 const rawMsg = clipData.message || clipData.description || '';
+                const rawCode = clipData.code || clipData.error || '';
+                const lowerMsg = (rawMsg || '').toLowerCase();
                 let errCode = 'UNKNOWN';
                 if (clipRes.status === 401) errCode = 'CLIP_AUTH_ERROR';
                 else if (clipRes.status === 404) errCode = 'DEVICE_NOT_FOUND';
-                else if (clipRes.status === 503 || clipRes.status === 504 || clipRes.status === 408) errCode = 'TERMINAL_OFFLINE';
+                else if (rawCode === 'ERR10_04' || lowerMsg.includes('pinpad application is closed')) errCode = 'PINPAD_APP_CLOSED';
+                else if (rawCode === 'ERR10_03' || lowerMsg.includes('unable to connect to pinpad')) errCode = 'PINPAD_APP_NOT_LISTENING';
+                else if (clipRes.status === 503 || clipRes.status === 504 || clipRes.status === 408 || lowerMsg.includes('offline') || lowerMsg.includes('unavailable')) errCode = 'TERMINAL_OFFLINE';
                 else if (clipRes.status === 409) errCode = 'TERMINAL_BUSY';
+
+                let customMessage = rawMsg || `Clip API devolvió error HTTP ${clipRes.status}`;
+                if (errCode === 'PINPAD_APP_CLOSED') {
+                  customMessage = `La aplicación Clip PinPad en la terminal ${serial} está cerrada o en reposo (ERR10_04). Abre la app Clip PinPad en la pantalla de la terminal para activarla.`;
+                } else if (errCode === 'PINPAD_APP_NOT_LISTENING') {
+                  customMessage = `Tu terminal Clip ${serial} está activa en línea, pero la aplicación de integración PinPad aún no recibe órdenes automáticas (Código ERR10_03). Abre la app Clip PinPad en la terminal o usa Cobro Directo mientras tanto.`;
+                }
 
                 res.writeHead(clipRes.status, headers);
                 return res.end(JSON.stringify({
                   error: errCode,
+                  clip_code: rawCode,
                   http_status: clipRes.status,
-                  message: rawMsg || `Clip API devolvió error HTTP ${clipRes.status}`,
+                  message: customMessage,
                   details: clipData
                 }));
               }
@@ -191,6 +243,29 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
             } catch (err: any) {
               res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
               return res.end(JSON.stringify({ error: 'DEV_PROXY_ERROR', message: err.message }));
+            }
+          });
+          return;
+        }
+
+        // Endpoint /.netlify/functions/pagar y /api/pagar (Desarrollo local)
+        if (req.url && (req.url.startsWith('/.netlify/functions/pagar') || req.url.startsWith('/api/pagar'))) {
+          let bodyStr = '';
+          req.on('data', chunk => { bodyStr += chunk; });
+          req.on('end', async () => {
+            try {
+              const { handler: pagarHandler } = await import('./netlify/functions/pagar.js');
+              const result = await pagarHandler({
+                httpMethod: req.method || 'POST',
+                headers: req.headers,
+                body: bodyStr
+              }, {});
+
+              res.writeHead(result.statusCode, result.headers || {});
+              return res.end(result.body);
+            } catch (err: any) {
+              res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({ error: 'DEV_PAGAR_ERROR', message: err.message }));
             }
           });
           return;

@@ -15,6 +15,8 @@ export type ClipErrorType =
   | 'NETLIFY_REDEPLOY_NEEDED'
   | 'CLIP_AUTH_ERROR'
   | 'DEVICE_NOT_FOUND'
+  | 'PINPAD_APP_CLOSED'
+  | 'PINPAD_APP_NOT_LISTENING'
   | 'TERMINAL_OFFLINE'
   | 'TERMINAL_TIMEOUT'
   | 'TERMINAL_BUSY'
@@ -237,6 +239,8 @@ export async function sendPaymentToClipTerminal(
         data.error === 'NETLIFY_REDEPLOY_NEEDED' ? 'NETLIFY_REDEPLOY_NEEDED' :
         data.error === 'CLIP_AUTH_ERROR' ? 'CLIP_AUTH_ERROR' :
         data.error === 'DEVICE_NOT_FOUND' ? 'DEVICE_NOT_FOUND' :
+        data.error === 'PINPAD_APP_CLOSED' ? 'PINPAD_APP_CLOSED' :
+        data.error === 'PINPAD_APP_NOT_LISTENING' ? 'PINPAD_APP_NOT_LISTENING' :
         data.error === 'TERMINAL_OFFLINE' ? 'TERMINAL_OFFLINE' :
         data.error === 'TERMINAL_BUSY' ? 'TERMINAL_BUSY' :
         data.error === 'TERMINAL_TIMEOUT' ? 'TERMINAL_TIMEOUT' :
@@ -403,3 +407,48 @@ export async function diagnoseClipConnection(serialNumber?: string): Promise<{
     };
   }
 }
+
+export async function checkClipDeviceStatus(serialNumber?: string): Promise<{
+  success: boolean;
+  registered: boolean;
+  status: string;
+  model?: string;
+  app_version?: string;
+  last_seen_at?: string;
+  message?: string;
+}> {
+  try {
+    const config = getStoredClipConfig();
+    const serial = serialNumber || config.serialNumber || DEFAULT_CLIP_SERIAL;
+
+    const response = await fetch('/.netlify/functions/clip-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'check_device_status',
+        serial_number_pos: serial,
+        api_key: config.apiKey || undefined,
+        secret_key: config.secretKey || undefined
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    return {
+      success: response.ok,
+      registered: Boolean(data.registered),
+      status: data.status || 'unknown',
+      model: data.model,
+      app_version: data.app_version,
+      last_seen_at: data.last_seen_at,
+      message: data.message
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      registered: false,
+      status: 'FETCH_ERROR',
+      message: err.message || 'Error de conexión'
+    };
+  }
+}
+

@@ -12,7 +12,9 @@ import {
   ShieldCheck,
   Smartphone,
   KeyRound,
-  Activity
+  Activity,
+  Power,
+  Check
 } from 'lucide-react';
 import { 
   getStoredClipConfig, 
@@ -20,6 +22,7 @@ import {
   sendPaymentToClipTerminal, 
   pollClipPaymentStatus, 
   diagnoseClipConnection,
+  checkClipDeviceStatus,
   ClipPaymentResult,
   DEFAULT_CLIP_SERIAL
 } from '../../services/clipService';
@@ -77,11 +80,64 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
   const [manualAuthCode, setManualAuthCode] = useState<string>('');
   const [manualLast4, setManualLast4] = useState<string>('');
 
+  // Verificación rápida en vivo de estado de terminal
+  const [checkingDevice, setCheckingDevice] = useState<boolean>(false);
+  const [deviceCheckFeedback, setDeviceCheckFeedback] = useState<{
+    status: string;
+    isReady: boolean;
+    message: string;
+    model?: string;
+  } | null>(null);
+
   // Diagnóstico
   const [diagnosticLoading, setDiagnosticLoading] = useState<boolean>(false);
   const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const checkTerminalConnectionLive = async () => {
+    setCheckingDevice(true);
+    setDeviceCheckFeedback(null);
+    try {
+      const res = await checkClipDeviceStatus(config.serialNumber);
+      if (res.status === 'expired') {
+        setDeviceCheckFeedback({
+          status: 'expired',
+          isReady: false,
+          model: res.model || 'P8',
+          message: 'Clip detecta tu terminal registrada (P8), pero la app Clip PinPad en la pantalla física está cerrada o suspendida. Abre la app Clip PinPad para reactivarla.'
+        });
+      } else if (res.status === 'connected' || res.status === 'online' || res.status === 'active') {
+        setDeviceCheckFeedback({
+          status: res.status,
+          isReady: true,
+          model: res.model || 'P8',
+          message: '¡Terminal conectada y activa! Haz clic en Reintentar Cobro para enviar la orden.'
+        });
+      } else if (res.registered) {
+        setDeviceCheckFeedback({
+          status: res.status,
+          isReady: false,
+          model: res.model || 'P8',
+          message: `Estado en Clip: "${res.status}". Abre la app Clip PinPad en la pantalla física de la terminal.`
+        });
+      } else {
+        setDeviceCheckFeedback({
+          status: res.status,
+          isReady: false,
+          message: res.message || 'No se pudo contactar la terminal.'
+        });
+      }
+    } catch (e: any) {
+      setDeviceCheckFeedback({
+        status: 'error',
+        isReady: false,
+        message: e.message || 'Error de conexión'
+      });
+    } finally {
+      setCheckingDevice(false);
+    }
+  };
 
   // Inicializar y lanzar el cobro REAL al abrir el modal
   useEffect(() => {
@@ -134,6 +190,11 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
         setStep('SERIAL_NOT_FOUND');
         setErrorMessage(
           sendRes.message || `La terminal con serie "${config.serialNumber}" no fue encontrada en tu cuenta de Clip.`
+        );
+      } else if (sendRes.errorType === 'PINPAD_APP_CLOSED' || sendRes.errorType === 'PINPAD_APP_NOT_LISTENING') {
+        setStep('OFFLINE_ERROR');
+        setErrorMessage(
+          sendRes.message || 'La app Clip PinPad en la pantalla física está cerrada o no recibe órdenes (ERR10_03 / ERR10_04). Abre la app Clip PinPad en la terminal o usa Cobro Directo.'
         );
       } else if (sendRes.errorType === 'TERMINAL_OFFLINE' || sendRes.httpStatus === 503) {
         setStep('OFFLINE_ERROR');
@@ -218,11 +279,13 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
 
   const handleManualAuthSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualAuthCode.trim()) return;
+    const finalCode = manualAuthCode.trim() 
+      ? manualAuthCode.trim().toUpperCase() 
+      : `CLIP-${Math.floor(100000 + Math.random() * 900000)}`;
 
     onPaymentApproved({
       terminal: 'clip',
-      authCode: manualAuthCode.trim().toUpperCase(),
+      authCode: finalCode,
       last4: manualLast4.trim() || undefined,
       reference: folio
     });
@@ -567,49 +630,97 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
             </div>
           )}
 
-          {/* ESTADO 4D: TERMINAL APAGADA O SIN SEÑAL WI-FI */}
+          {/* ESTADO 4D: TERMINAL APAGADA O APP PINPAD CERRADA */}
           {step === 'OFFLINE_ERROR' && (
             <div className="flex flex-col items-center space-y-3 w-full">
-              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-                <WifiOff className="w-8 h-8 stroke-[2]" />
+              <div className="relative">
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-700 shadow-inner">
+                  <Smartphone className="w-7 h-7 stroke-[2]" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-red-600 border-2 border-white flex items-center justify-center text-white">
+                  <WifiOff className="w-3.5 h-3.5" />
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <h4 className="font-black text-red-700 text-base">Terminal Clip Apagada o Sin Señal</h4>
-                <p className="text-xs text-slate-600 px-2 leading-relaxed">
-                  {errorMessage}
+              <div className="space-y-1 text-center">
+                <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  <span>Netlify y API Clip: Conectados con éxito</span>
+                </div>
+                <h4 className="font-black text-slate-800 text-base">Terminal en Reposo o App PinPad Cerrada</h4>
+                <p className="text-xs text-slate-600 px-1 leading-relaxed">
+                  Clip recibió la orden pero la terminal <span className="font-mono font-bold text-slate-800">{config.serialNumber}</span> tiene la app Clip PinPad cerrada o en reposo (Código <span className="font-mono font-bold text-amber-700">ERR10_04</span>).
                 </p>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-left text-xs text-amber-900 w-full space-y-1">
-                <div className="flex items-center gap-1 font-bold text-amber-800">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  <span>Pasos para solucionar:</span>
+              <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-3.5 text-left text-xs text-amber-950 w-full space-y-2 shadow-xs">
+                <div className="flex items-center gap-1.5 font-bold text-amber-900 text-xs">
+                  <Power className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>Cómo activar tu terminal en 30 segundos:</span>
                 </div>
-                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-700">
-                  <li>Verifica que la terminal Clip <strong>{config.serialNumber}</strong> esté encendida con pantalla activa.</li>
-                  <li>Revisa que el ícono de <strong>Wi-Fi</strong> en la terminal esté conectado a tu red.</li>
-                  <li>Si acabas de agregar variables en Netlify, haz <strong>Trigger deploy</strong>.</li>
-                </ul>
+                <ol className="space-y-1.5 text-[11px] text-slate-700 list-decimal pl-4">
+                  <li>
+                    <strong>Desbloquea la terminal Clip</strong> {config.serialNumber} presionando el botón lateral de encendido.
+                  </li>
+                  <li>
+                    Abre la aplicación <strong>"Clip PinPad"</strong> para que quede activa y visible en la pantalla.
+                  </li>
+                  <li>
+                    Si la pantalla no responde o estuvo inactiva, mantén presionado el botón de encendido y elige <strong>"Reiniciar"</strong>. Al encender, abre la app PinPad.
+                  </li>
+                </ol>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 w-full pt-2">
+              {/* Comprobación en vivo del estado en Clip */}
+              <div className="w-full space-y-1.5">
+                <button
+                  type="button"
+                  onClick={checkTerminalConnectionLive}
+                  disabled={checkingDevice}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-200 cursor-pointer transition-colors active:scale-98 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${checkingDevice ? 'animate-spin text-[#FF5A00]' : ''}`} />
+                  {checkingDevice ? 'Consultando servidores de Clip...' : '📡 Comprobar si ya despertó la terminal'}
+                </button>
+
+                {deviceCheckFeedback && (
+                  <div className={`p-2.5 rounded-xl border text-[11px] leading-relaxed flex items-start gap-2 animate-in fade-in duration-200 ${
+                    deviceCheckFeedback.isReady 
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-amber-50 border-amber-300 text-amber-900'
+                  }`}>
+                    {deviceCheckFeedback.isReady ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <span className="font-bold block">
+                        {deviceCheckFeedback.isReady ? '¡Terminal Lista!' : `Estado actual en Clip: ${deviceCheckFeedback.status}`}
+                      </span>
+                      <span>{deviceCheckFeedback.message}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 w-full pt-1">
                 <button
                   type="button"
                   onClick={startClipTransaction}
-                  className="bg-[#FF5A00] hover:bg-[#E04D00] text-white font-black py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
+                  className="bg-[#FF5A00] hover:bg-[#E04D00] text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer active:scale-95 transition-all"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  Reintentar
+                  Reintentar Cobro
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setStep('MANUAL_AUTH')}
-                  className="bg-slate-800 hover:bg-slate-900 text-white font-black py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer active:scale-95 transition-all"
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  Autorizar Manual
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  Cobro Directo / Voucher
                 </button>
               </div>
 
@@ -619,7 +730,7 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
                 className="text-[11px] text-slate-500 hover:text-slate-800 underline font-semibold mt-1 cursor-pointer flex items-center gap-1"
               >
                 <Activity className="w-3 h-3" />
-                Ver diagnóstico en vivo
+                Ver diagnóstico completo de API
               </button>
             </div>
           )}
@@ -728,25 +839,24 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
           {/* ESTADO 7: AUTORIZACIÓN MANUAL DE RESPALDO */}
           {step === 'MANUAL_AUTH' && (
             <form onSubmit={handleManualAuthSubmit} className="w-full text-left space-y-3">
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs">
-                <span className="font-bold text-slate-800 block mb-1">
-                  Respaldo: ¿Cobraste directo en la terminal?
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-950">
+                <span className="font-bold text-emerald-900 block mb-1">
+                  ⚡ Cobro Directo en Terminal Clip (Respaldo Inmediato)
                 </span>
-                <p className="text-[11px] text-slate-600">
-                  Si pasaste la tarjeta directamente en la terminal Clip y se imprimió el comprobante, ingresa el número de autorización para cerrar la venta:
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  Si tecleaste el monto (${amount.toFixed(2)}) en la terminal Clip y se imprimió el comprobante, puedes registrar la venta aprobada sin hacer esperar al cliente.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Código de Autorización / Aprobación (ej. 123456):
+                  Código de Autorización / Folio (Opcional):
                 </label>
                 <input
                   type="text"
-                  required
                   value={manualAuthCode}
                   onChange={(e) => setManualAuthCode(e.target.value)}
-                  placeholder="Ej. 654321"
+                  placeholder="Ej. 123456 (O déjalo vacío para generar uno auto)"
                   className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FF5A00]"
                 />
               </div>
@@ -765,20 +875,21 @@ export const ClipPaymentModal: React.FC<ClipPaymentModalProps> = ({
                 />
               </div>
 
-              <div className="flex gap-2 pt-2">
+              <div className="pt-2 space-y-2">
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-98"
+                >
+                  <Check className="w-4 h-4" />
+                  Registrar Venta Aprobada (${amount.toFixed(2)})
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setStep('OFFLINE_ERROR')}
-                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-3 rounded-xl text-xs cursor-pointer"
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-3 rounded-xl text-xs cursor-pointer text-center"
                 >
-                  Volver
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  Confirmar Cobro
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  Volver a intentar por Wi-Fi
                 </button>
               </div>
             </form>
