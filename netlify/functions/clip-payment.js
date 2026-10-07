@@ -89,8 +89,8 @@ exports.handler = async (event) => {
       }
     }
 
-    const defaultApiKey = 'a7c54f1f-9bea-4405-a128-83e8f18f9d32';
-    const defaultSecretKey = '9d0167db-964e-459b-bada-b758d301f792';
+    const defaultApiKey = '44a3f5bb-52dc-48bd-8f14-fcf75b7cddee';
+    const defaultSecretKey = '376ed357-eff3-4e80-a67e-a1f562ac18d9';
     const defaultSerial = 'P8C2240805000156';
 
     // Obtenemos credenciales del payload del cliente o de variables de entorno de Netlify o credenciales oficiales
