@@ -1,6 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
 import { defineConfig, Plugin } from 'vite';
 
 // Plugin para conectar directamente con la API real de Clip Pinpad F2F en desarrollo
@@ -287,6 +288,17 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
             'Access-Control-Allow-Origin': '*'
           };
 
+          const tempStoreFile = path.join('/tmp', 'santafe_cloud_data_store.json');
+          if (!(global as any).__santafe_store) {
+            try {
+              if (fs.existsSync(tempStoreFile)) {
+                (global as any).__santafe_store = JSON.parse(fs.readFileSync(tempStoreFile, 'utf8'));
+              }
+            } catch (err) {
+              // ignore
+            }
+          }
+
           if (req.method === 'GET') {
             res.writeHead(200, headers);
             return res.end(JSON.stringify({
@@ -380,6 +392,12 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                   customers: payload.customers || current.customers || [],
                   lastUpdated: new Date().toISOString()
                 };
+
+                try {
+                  fs.writeFileSync(tempStoreFile, JSON.stringify((global as any).__santafe_store, null, 2), 'utf8');
+                } catch {
+                  // ignore
+                }
 
                 res.writeHead(200, headers);
                 return res.end(JSON.stringify({

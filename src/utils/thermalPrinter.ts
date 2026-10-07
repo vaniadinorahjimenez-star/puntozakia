@@ -129,7 +129,7 @@ export function buildTicketEscPosBytes(
     .align('center')
     .bold(true)
     .size('large')
-    .line(settings.bakeryName || 'Panaderia Santa Fé el refugio')
+    .line(settings.bakeryName || 'Panaderia Santa Fé Zakia')
     .size('normal')
     .bold(true)
     .line(settings.slogan || 'Pan calientito y tradicional.')
@@ -656,7 +656,7 @@ export function printTicketDirectToPrinter(ticket: SaleTicket, settings: Setting
       </head>
       <body>
         <div class="center">
-          <div class="title">${settings.bakeryName || 'Panaderia Santa Fé el refugio'}</div>
+          <div class="title">${settings.bakeryName || 'Panaderia Santa Fé Zakia'}</div>
           <div class="subtitle">${settings.slogan || 'Pan calientito y tradicional.'}</div>
           <div class="subtitle">${settings.address || '7:00 am a 10:00 pm'}</div>
           <div class="subtitle">TEL: ${settings.phone || '442 816 3291'}</div>
@@ -852,7 +852,7 @@ export function printOrderTicketDirectToPrinter(order: BakeryOrder, settings: Se
       </head>
       <body>
         <div class="center">
-          <div class="title">${settings.bakeryName || 'Panaderia Santa Fe el refugio'}</div>
+          <div class="title">${settings.bakeryName || 'Panaderia Santa Fe Zakia'}</div>
           <div class="subtitle">${settings.slogan || 'Pan calientito y tradicional.'}</div>
           <div class="subtitle">TEL: ${settings.phone || '442 816 3291'}</div>
         </div>
@@ -1052,7 +1052,7 @@ export function printAccountStatementDirectToPrinter(
       </head>
       <body>
         <div class="center">
-          <div class="title">${settings.bakeryName || 'Panaderia Santa Fe el refugio'}</div>
+          <div class="title">${settings.bakeryName || 'Panaderia Santa Fe Zakia'}</div>
           <div class="subtitle">EDO. CUENTA / CORTE MENSUAL</div>
           <div class="subtitle">TEL: ${settings.phone || '442 816 3291'}</div>
         </div>

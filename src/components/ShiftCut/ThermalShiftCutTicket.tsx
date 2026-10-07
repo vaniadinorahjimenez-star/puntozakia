@@ -231,7 +231,7 @@ export const ThermalShiftCutTicket: React.FC<ThermalShiftCutTicketProps> = ({
             {/* Store Header */}
             <div className="text-center space-y-0.5 pb-2.5 border-b-2 border-dashed border-black">
               <div className="text-sm sm:text-base font-black tracking-wider text-black leading-tight">
-                {settings.bakeryName || 'Panaderia Santa Fé el refugio'}
+                {settings.bakeryName || 'Panaderia Santa Fé Zakia'}
               </div>
               <div className="text-[11px] font-black text-black leading-tight">
                 {settings.slogan || 'Pan calientito y tradicional.'}

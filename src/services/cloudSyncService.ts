@@ -28,6 +28,42 @@ export interface CloudSyncResult {
 
 type SyncListener = (data: NonNullable<CloudSyncResult['mergedData']>) => void;
 const listeners: Set<SyncListener> = new Set();
+let lastSyncTimestamp: number = Date.now();
+
+let broadcastChannel: BroadcastChannel | null = null;
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+  try {
+    broadcastChannel = new BroadcastChannel('santafe_realtime_sync');
+    broadcastChannel.onmessage = (event) => {
+      if (event.data?.type === 'SYNC_DATA_UPDATE' && event.data?.data) {
+        lastSyncTimestamp = Date.now();
+        listeners.forEach(cb => {
+          try {
+            cb(event.data.data);
+          } catch (e) {
+            console.error('Error en listener de BroadcastChannel:', e);
+          }
+        });
+      } else if (event.data?.type === 'SALE_REGISTERED') {
+        // Otra pestaña o ventana registró una venta: forzar fetch inmediato
+        lastSyncTimestamp = Date.now();
+        fetchAndMergeCloud();
+      }
+    };
+  } catch (e) {
+    console.warn('BroadcastChannel no disponible:', e);
+  }
+}
+
+export function broadcastRealtimeSale(ticket?: SaleTicket) {
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: 'SALE_REGISTERED', ticket, timestamp: Date.now() });
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export function onCloudSyncUpdated(cb: SyncListener): () => void {
   listeners.add(cb);
@@ -37,6 +73,7 @@ export function onCloudSyncUpdated(cb: SyncListener): () => void {
 }
 
 function notifyListeners(data: NonNullable<CloudSyncResult['mergedData']>) {
+  lastSyncTimestamp = Date.now();
   listeners.forEach(cb => {
     try {
       cb(data);
@@ -44,6 +81,14 @@ function notifyListeners(data: NonNullable<CloudSyncResult['mergedData']>) {
       console.error('Error en callback de sincronización:', e);
     }
   });
+
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: 'SYNC_DATA_UPDATE', data, timestamp: Date.now() });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 let isSyncInProgress = false;
@@ -265,6 +310,6 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
 export function getCloudSyncStatus(): { isOnline: boolean; lastSyncTime: number } {
   return {
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-    lastSyncTime: Date.now()
+    lastSyncTime: lastSyncTimestamp
   };
 }

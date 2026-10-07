@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { SaleTicket, Settings, ShiftCutRecord, BakeryOrder, Driver, DriverCustomer } from '../../types';
 import { 
   TrendingUp, 
@@ -6,6 +6,7 @@ import {
   CreditCard, 
   Receipt, 
   Calendar, 
+  CalendarRange,
   Search, 
   Printer, 
   Eye, 
@@ -18,6 +19,8 @@ import {
   Lock,
   ShieldAlert,
   AlertTriangle,
+  Activity,
+  BarChart3,
   X,
   KeyRound,
   Truck,
@@ -96,9 +99,48 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
   onUpdateOrder
 }) => {
   const todayStr = getTodayString();
+  const [dateFilterMode, setDateFilterMode] = useState<'hoy' | 'ayer' | 'semana' | 'mes' | 'dia' | 'rango' | 'todos'>('hoy');
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [dateFilterMode, setDateFilterMode] = useState<'hoy' | 'ayer' | 'semana' | 'personalizado'>('hoy');
+
+  // Compute reference dates
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+  const now = new Date();
+  const firstDayOfMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+  const [startDate, setStartDate] = useState<string>(sevenDaysAgoStr);
+  const [endDate, setEndDate] = useState<string>(todayStr);
   
+  // Real-time status ticker
+  const [timeAgoStr, setTimeAgoStr] = useState<string>('En vivo');
+  useEffect(() => {
+    const updateTicker = () => {
+      const status = getCloudSyncStatus();
+      const diffSec = Math.floor((Date.now() - status.lastSyncTime) / 1000);
+      if (diffSec < 4) {
+        setTimeAgoStr('En vivo');
+      } else if (diffSec < 60) {
+        setTimeAgoStr(`hace ${diffSec}s`);
+      } else {
+        const mins = Math.floor(diffSec / 60);
+        setTimeAgoStr(`hace ${mins}m`);
+      }
+    };
+    updateTicker();
+    const interval = setInterval(updateTicker, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Sub-Navigation Module in Historial de Caja
   // 'corte_caja' (Mostrador / Turnos) | 'repartos' (Reparto y choferes) | 'pedidos_tienda' (Recoger en tienda) | 'por_cobrar' (Montos pendientes por cobrar)
   const [activeModule, setActiveModule] = useState<'corte_caja' | 'repartos' | 'pedidos_tienda' | 'por_cobrar'>('corte_caja');
@@ -151,16 +193,6 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
     }
   };
 
-  // Compute yesterday string
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  // Compute 7 days ago
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
-
   // Helper para resolver la fecha del ticket de forma infalible
   const getTicketDate = (t: SaleTicket): string => {
     if (t.date && typeof t.date === 'string' && t.date.trim()) return t.date.trim();
@@ -168,25 +200,97 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
     return todayStr;
   };
 
-  // 1. DATE-MATCHED TICKETS (Mostrador)
-  const dateMatchedTickets = tickets.filter(ticket => {
-    const tDate = getTicketDate(ticket);
-    if (dateFilterMode === 'hoy' && tDate !== todayStr) return false;
-    if (dateFilterMode === 'ayer' && tDate !== yesterdayStr) return false;
-    if (dateFilterMode === 'semana' && tDate < sevenDaysAgoStr) return false;
-    if (dateFilterMode === 'personalizado' && tDate !== selectedDate) return false;
-    return true;
-  });
+  // MACRO CARDS: CÁLCULOS 100% REALES PARA HOY, SEMANA Y MES
+  // 1. Hoy
+  const todayTickets = useMemo(() => tickets.filter(t => getTicketDate(t) === todayStr), [tickets, todayStr]);
+  const todayTotal = useMemo(() => todayTickets.reduce((sum, t) => sum + t.total, 0), [todayTickets]);
+  const todayCash = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'efectivo').reduce((sum, t) => sum + t.total, 0), [todayTickets]);
+  const todayCard = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'tarjeta').reduce((sum, t) => sum + t.total, 0), [todayTickets]);
+  const todayPieces = useMemo(() => todayTickets.reduce((sum, t) => sum + t.items.reduce((s, it) => s + it.quantity, 0), 0), [todayTickets]);
 
-  // 2. DATE-MATCHED ORDERS (Repartos y Pedidos Tienda)
-  const dateMatchedOrders = orders.filter(order => {
-    const orderDate = order.deliveryDate || (order.createdAt ? order.createdAt.split('T')[0] : todayStr);
-    if (dateFilterMode === 'hoy' && orderDate !== todayStr) return false;
-    if (dateFilterMode === 'ayer' && orderDate !== yesterdayStr) return false;
-    if (dateFilterMode === 'semana' && orderDate < sevenDaysAgoStr) return false;
-    if (dateFilterMode === 'personalizado' && orderDate !== selectedDate) return false;
-    return true;
-  });
+  // 2. Semana (Últimos 7 días)
+  const weekTickets = useMemo(() => tickets.filter(t => {
+    const d = getTicketDate(t);
+    return d >= sevenDaysAgoStr && d <= todayStr;
+  }), [tickets, sevenDaysAgoStr, todayStr]);
+  const weekTotal = useMemo(() => weekTickets.reduce((sum, t) => sum + t.total, 0), [weekTickets]);
+  const weekPieces = useMemo(() => weekTickets.reduce((sum, t) => sum + t.items.reduce((s, it) => s + it.quantity, 0), 0), [weekTickets]);
+  const weekUniqueDays = useMemo(() => new Set(weekTickets.map(t => getTicketDate(t))).size || 1, [weekTickets]);
+  const weekAvgDaily = useMemo(() => Math.round(weekTotal / Math.max(1, weekUniqueDays)), [weekTotal, weekUniqueDays]);
+
+  // 3. Mes (Mes actual)
+  const monthTickets = useMemo(() => tickets.filter(t => {
+    const d = getTicketDate(t);
+    return (d >= firstDayOfMonthStr && d <= todayStr) || (d >= thirtyDaysAgoStr && d <= todayStr);
+  }), [tickets, firstDayOfMonthStr, thirtyDaysAgoStr, todayStr]);
+  const monthTotal = useMemo(() => monthTickets.reduce((sum, t) => sum + t.total, 0), [monthTickets]);
+  const monthPieces = useMemo(() => monthTickets.reduce((sum, t) => sum + t.items.reduce((s, it) => s + it.quantity, 0), 0), [monthTickets]);
+  const monthUniqueDays = useMemo(() => new Set(monthTickets.map(t => getTicketDate(t))).size || 1, [monthTickets]);
+  const monthAvgDaily = useMemo(() => Math.round(monthTotal / Math.max(1, monthUniqueDays)), [monthTotal, monthUniqueDays]);
+
+  // 1. DATE-MATCHED TICKETS (Mostrador según filtro activo)
+  const dateMatchedTickets = useMemo(() => {
+    return tickets.filter(ticket => {
+      const tDate = getTicketDate(ticket);
+      if (dateFilterMode === 'hoy') return tDate === todayStr;
+      if (dateFilterMode === 'ayer') return tDate === yesterdayStr;
+      if (dateFilterMode === 'semana') return tDate >= sevenDaysAgoStr && tDate <= todayStr;
+      if (dateFilterMode === 'mes') return (tDate >= firstDayOfMonthStr && tDate <= todayStr) || (tDate >= thirtyDaysAgoStr && tDate <= todayStr);
+      if (dateFilterMode === 'dia') return tDate === selectedDate;
+      if (dateFilterMode === 'rango') return tDate >= startDate && tDate <= endDate;
+      if (dateFilterMode === 'todos') return true;
+      return true;
+    });
+  }, [tickets, dateFilterMode, todayStr, yesterdayStr, sevenDaysAgoStr, thirtyDaysAgoStr, firstDayOfMonthStr, selectedDate, startDate, endDate]);
+
+  // 2. DATE-MATCHED ORDERS (Repartos y Pedidos Tienda según filtro activo)
+  const dateMatchedOrders = useMemo(() => {
+    return orders.filter(order => {
+      const orderDate = order.deliveryDate || (order.createdAt ? order.createdAt.split('T')[0] : todayStr);
+      if (dateFilterMode === 'hoy') return orderDate === todayStr;
+      if (dateFilterMode === 'ayer') return orderDate === yesterdayStr;
+      if (dateFilterMode === 'semana') return orderDate >= sevenDaysAgoStr && orderDate <= todayStr;
+      if (dateFilterMode === 'mes') return (orderDate >= firstDayOfMonthStr && orderDate <= todayStr) || (orderDate >= thirtyDaysAgoStr && orderDate <= todayStr);
+      if (dateFilterMode === 'dia') return orderDate === selectedDate;
+      if (dateFilterMode === 'rango') return orderDate >= startDate && orderDate <= endDate;
+      if (dateFilterMode === 'todos') return true;
+      return true;
+    });
+  }, [orders, dateFilterMode, todayStr, yesterdayStr, sevenDaysAgoStr, thirtyDaysAgoStr, firstDayOfMonthStr, selectedDate, startDate, endDate]);
+
+  // DESGLOSE DIARIO DE VENTAS REALES (Día por Día en la semana / mes / rango)
+  const dailyBreakdown = useMemo(() => {
+    const map = new Map<string, {
+      date: string;
+      total: number;
+      cash: number;
+      card: number;
+      ticketsCount: number;
+      pieces: number;
+    }>();
+
+    for (const t of dateMatchedTickets) {
+      const d = getTicketDate(t);
+      if (!map.has(d)) {
+        map.set(d, {
+          date: d,
+          total: 0,
+          cash: 0,
+          card: 0,
+          ticketsCount: 0,
+          pieces: 0
+        });
+      }
+      const item = map.get(d)!;
+      item.total += t.total;
+      if (t.paymentMethod === 'tarjeta') item.card += t.total;
+      else item.cash += t.total;
+      item.ticketsCount += 1;
+      item.pieces += t.items.reduce((sum, it) => sum + it.quantity, 0);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [dateMatchedTickets]);
 
   // Helper categorization functions
   const isOrderDelivery = (o: BakeryOrder) => {
@@ -446,7 +550,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
     const cutRecord: ShiftCutRecord = {
       id: `cut-hist-${Date.now()}`,
       folio: `CORTE-${shiftType.toUpperCase()}`,
-      date: dateFilterMode === 'hoy' ? todayStr : selectedDate,
+      date: dateFilterMode === 'hoy' ? todayStr : (dateFilterMode === 'ayer' ? yesterdayStr : (dateFilterMode === 'rango' ? `${startDate} al ${endDate}` : (dateFilterMode === 'semana' ? `${sevenDaysAgoStr} al ${todayStr}` : selectedDate))),
       time: getNowTimeString(),
       cashierName: shiftCashier,
       shiftName: shiftTitle,
@@ -556,11 +660,17 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
             📊
           </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
-              Historial de Caja, Repartos y Cuentas por Cobrar
-            </h1>
-            <p className="text-xs text-slate-600 font-bold">
-              Corte de Turnos (T1 & T2) · Montos de Reparto · Pedidos en Tienda · Cuentas por Cobrar
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
+                Historial de Caja, Repartos y Cuentas por Cobrar
+              </h1>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>{timeAgoStr}</span>
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 font-bold mt-0.5">
+              Corte de Turnos (T1 & T2) · Montos de Reparto · Pedidos en Tienda · Cuentas por Cobrar • {tickets.length} ventas en vivo
             </p>
           </div>
         </div>
@@ -640,7 +750,114 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
         </div>
       )}
 
-      {/* 2. TOP MACRO FINANCIAL EXECUTIVE CARDS (Resumen del Día / Período) */}
+      {/* SECCIÓN EJECUTIVA: VENTA DIARIA, POR SEMANA Y POR MES (100% DATOS REALES) */}
+      <div className="bg-gradient-to-br from-amber-500 via-[#D95D39] to-orange-600 rounded-3xl p-4 sm:p-5 text-white shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5 pb-3 border-b border-white/20">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center font-black text-xl shadow-xs">
+              📈
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-black tracking-tight leading-tight">
+                Venta Diaria, por Semana y por Mes (En Vivo)
+              </h2>
+              <p className="text-[11px] text-amber-100 font-medium">
+                Cifras 100% reales calculadas directamente de las ventas cobradas en caja
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-white/20 text-white border border-white/30 backdrop-blur-xs shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>Conectado en Tiempo Real ({timeAgoStr})</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* 1. Venta Diaria (Hoy) */}
+          <div 
+            onClick={() => setDateFilterMode('hoy')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer backdrop-blur-xs ${
+              dateFilterMode === 'hoy'
+                ? 'bg-white text-slate-900 border-white shadow-md ring-2 ring-amber-300'
+                : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className={`text-[11px] font-black uppercase tracking-wider ${dateFilterMode === 'hoy' ? 'text-amber-800' : 'text-amber-200'}`}>
+                📅 Venta Diaria (Hoy)
+              </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dateFilterMode === 'hoy' ? 'bg-amber-100 text-amber-900' : 'bg-white/20 text-white'}`}>
+                {todayTickets.length} ventas
+              </span>
+            </div>
+            <div className="mt-2 text-2xl sm:text-3xl font-black tracking-tight">
+              ${todayTotal.toLocaleString('es-MX')}.00
+            </div>
+            <div className={`flex items-center justify-between text-[11px] font-bold mt-1.5 pt-2 border-t ${dateFilterMode === 'hoy' ? 'border-slate-100 text-slate-600' : 'border-white/15 text-amber-100'}`}>
+              <span>💵 Efec: ${todayCash}</span>
+              <span>💳 Tarj: ${todayCard}</span>
+              <span>🥖 {todayPieces} pzs</span>
+            </div>
+          </div>
+
+          {/* 2. Venta Semanal (Últimos 7 días) */}
+          <div 
+            onClick={() => setDateFilterMode('semana')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer backdrop-blur-xs ${
+              dateFilterMode === 'semana'
+                ? 'bg-white text-slate-900 border-white shadow-md ring-2 ring-amber-300'
+                : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className={`text-[11px] font-black uppercase tracking-wider ${dateFilterMode === 'semana' ? 'text-amber-800' : 'text-amber-200'}`}>
+                🗓️ Venta por Semana (7 Días)
+              </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dateFilterMode === 'semana' ? 'bg-amber-100 text-amber-900' : 'bg-white/20 text-white'}`}>
+                {weekTickets.length} ventas
+              </span>
+            </div>
+            <div className="mt-2 text-2xl sm:text-3xl font-black tracking-tight">
+              ${weekTotal.toLocaleString('es-MX')}.00
+            </div>
+            <div className={`flex items-center justify-between text-[11px] font-bold mt-1.5 pt-2 border-t ${dateFilterMode === 'semana' ? 'border-slate-100 text-slate-600' : 'border-white/15 text-amber-100'}`}>
+              <span>Promedio: ${weekAvgDaily.toLocaleString('es-MX')}/día</span>
+              <span>🥖 {weekPieces} pzs</span>
+            </div>
+          </div>
+
+          {/* 3. Venta Mensual (Este Mes) */}
+          <div 
+            onClick={() => setDateFilterMode('mes')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer backdrop-blur-xs ${
+              dateFilterMode === 'mes'
+                ? 'bg-white text-slate-900 border-white shadow-md ring-2 ring-amber-300'
+                : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className={`text-[11px] font-black uppercase tracking-wider ${dateFilterMode === 'mes' ? 'text-amber-800' : 'text-amber-200'}`}>
+                📊 Venta por Mes (Este Mes)
+              </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dateFilterMode === 'mes' ? 'bg-amber-100 text-amber-900' : 'bg-white/20 text-white'}`}>
+                {monthTickets.length} ventas
+              </span>
+            </div>
+            <div className="mt-2 text-2xl sm:text-3xl font-black tracking-tight">
+              ${monthTotal.toLocaleString('es-MX')}.00
+            </div>
+            <div className={`flex items-center justify-between text-[11px] font-bold mt-1.5 pt-2 border-t ${dateFilterMode === 'mes' ? 'border-slate-100 text-slate-600' : 'border-white/15 text-amber-100'}`}>
+              <span>Promedio: ${monthAvgDaily.toLocaleString('es-MX')}/día</span>
+              <span>🥖 {monthPieces} pzs</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. TOP MACRO FINANCIAL EXECUTIVE CARDS (Resumen del Día / Período Seleccionado) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {/* CARD 1: CORTE DEL DÍA / MOSTRADOR */}
         <div 
@@ -769,7 +986,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
 
       {/* 3. DATE & TIME PERIOD BAR */}
       <div className="bg-white rounded-2xl p-3 shadow-xs border border-slate-200 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1">
+        <div className="flex items-center flex-wrap bg-slate-100 p-1 rounded-xl gap-1">
           <button
             id="date-filter-hoy-btn"
             type="button"
@@ -778,7 +995,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
               dateFilterMode === 'hoy' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
             }`}
           >
-            Hoy
+            Hoy (Diaria)
           </button>
           <button
             id="date-filter-ayer-btn"
@@ -798,28 +1015,78 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
               dateFilterMode === 'semana' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
             }`}
           >
-            Últimos 7 Días
+            Esta Semana (7 Días)
           </button>
           <button
-            id="date-filter-personalizado-btn"
+            id="date-filter-mes-btn"
             type="button"
-            onClick={() => setDateFilterMode('personalizado')}
+            onClick={() => setDateFilterMode('mes')}
             className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
-              dateFilterMode === 'personalizado' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+              dateFilterMode === 'mes' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
             }`}
           >
-            Por Fecha
+            Este Mes
+          </button>
+          <button
+            id="date-filter-dia-btn"
+            type="button"
+            onClick={() => setDateFilterMode('dia')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              dateFilterMode === 'dia' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            Por Día
+          </button>
+          <button
+            id="date-filter-rango-btn"
+            type="button"
+            onClick={() => setDateFilterMode('rango')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              dateFilterMode === 'rango' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            Rango de Fechas
+          </button>
+          <button
+            id="date-filter-todos-btn"
+            type="button"
+            onClick={() => setDateFilterMode('todos')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              dateFilterMode === 'todos' ? 'bg-[#D95D39] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            Todo
           </button>
         </div>
 
-        {dateFilterMode === 'personalizado' && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-700">Día Seleccionado:</span>
+        {/* Date Selectors for Dia and Rango */}
+        {dateFilterMode === 'dia' && (
+          <div className="flex items-center gap-2 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-300">
+            <span className="text-xs font-black text-amber-950">Día:</span>
             <input
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="px-3 py-1 bg-amber-50 rounded-lg text-xs font-bold border border-amber-300 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              className="px-2.5 py-1 bg-white rounded-lg text-xs font-bold border border-amber-400 text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+        )}
+
+        {dateFilterMode === 'rango' && (
+          <div className="flex flex-wrap items-center gap-2 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-300">
+            <span className="text-xs font-black text-amber-950">Desde:</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="px-2.5 py-1 bg-white rounded-lg text-xs font-bold border border-amber-400 text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+            <span className="text-xs font-black text-amber-950">Hasta:</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="px-2.5 py-1 bg-white rounded-lg text-xs font-bold border border-amber-400 text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
             />
           </div>
         )}
@@ -838,6 +1105,59 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
           </div>
         </div>
       </div>
+
+      {/* DESGLOSE REAL DÍA POR DÍA (Para períodos de más de 1 día) */}
+      {(dateFilterMode === 'semana' || dateFilterMode === 'mes' || dateFilterMode === 'rango' || dateFilterMode === 'todos') && dailyBreakdown.length > 0 && (
+        <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-xs border border-slate-200">
+          <div className="flex flex-wrap items-center justify-between pb-3 border-b border-slate-100 gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <CalendarRange className="w-5 h-5 text-[#D95D39]" />
+              <div>
+                <h3 className="text-sm font-black text-slate-900">
+                  Desglose Real Día por Día ({dailyBreakdown.length} {dailyBreakdown.length === 1 ? 'día con ventas' : 'días con ventas'})
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Haz clic en cualquier día para filtrar directamente sus ventas
+                </p>
+              </div>
+            </div>
+            <div className="text-xs font-black text-[#D95D39] bg-amber-50 px-3 py-1 rounded-xl border border-amber-200">
+              Total Acumulado: ${mostradorTotal.toLocaleString('es-MX')}.00 ({filteredTickets.length} tickets)
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+            {dailyBreakdown.map(day => (
+              <div 
+                key={day.date} 
+                onClick={() => {
+                  setSelectedDate(day.date);
+                  setDateFilterMode('dia');
+                }}
+                className="p-3 rounded-2xl bg-slate-50 hover:bg-amber-50/80 border border-slate-200 hover:border-amber-400 transition-all cursor-pointer group shadow-2xs"
+                title={`Ver ventas del día ${day.date}`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-900 group-hover:text-amber-900">
+                    {day.date === todayStr ? '📅 Hoy' : day.date === yesterdayStr ? '📆 Ayer' : day.date}
+                  </span>
+                  <span className="text-[10px] font-bold bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
+                    {day.ticketsCount} tickets
+                  </span>
+                </div>
+                <div className="text-lg font-black text-slate-900 mt-1">
+                  ${day.total.toLocaleString('es-MX')}.00
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 mt-1 pt-1 border-t border-slate-200/60">
+                  <span className="text-emerald-700 font-black">💵 ${day.cash}</span>
+                  <span className="text-blue-700 font-black">💳 ${day.card}</span>
+                  <span>🥖 {day.pieces} pzs</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 4. MAIN NAVIGATION MODULE SELECTOR (TABS) */}
       <div className="flex items-center overflow-x-auto gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">

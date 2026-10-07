@@ -13,7 +13,7 @@ export function buildShiftCutEscPosBytes(cut: ShiftCutRecord, settings: Settings
     .align('center')
     .bold(true)
     .size('large')
-    .line(settings.bakeryName || 'Panaderia Santa Fé el refugio')
+    .line(settings.bakeryName || 'Panaderia Santa Fé Zakia')
     .size('normal')
     .bold(true)
     .line(settings.slogan || 'Pan calientito y tradicional.')
@@ -219,7 +219,7 @@ export function printShiftCutDirectToPrinter(cut: ShiftCutRecord, settings: Sett
       </head>
       <body>
         <div class="center">
-          <div class="title">${settings.bakeryName || 'Panaderia Santa Fé el refugio'}</div>
+          <div class="title">${settings.bakeryName || 'Panaderia Santa Fé Zakia'}</div>
           <div class="subtitle">${settings.slogan || 'Pan calientito y tradicional.'}</div>
           <div class="subtitle">${settings.address || '7:00 am a 10:00 pm'}</div>
           <div class="subtitle">TEL: ${settings.phone || '442 816 3291'}</div>

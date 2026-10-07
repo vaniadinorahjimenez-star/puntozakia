@@ -659,7 +659,7 @@ export const OrdersManager: React.FC<OrdersManagerProps> = ({
               <h1 className="text-xl font-extrabold text-slate-900 leading-tight flex items-center gap-2">
                 <span>Encargos y Pedidos</span>
                 <span className="bg-amber-100 text-amber-900 text-[11px] font-black px-2 py-0.5 rounded-md border border-amber-300">
-                  Santa Fé El Refugio
+                  Santa Fé Zakia
                 </span>
               </h1>
               <p className="text-xs text-slate-500 font-medium">

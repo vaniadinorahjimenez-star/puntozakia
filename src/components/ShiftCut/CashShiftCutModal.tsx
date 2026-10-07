@@ -487,7 +487,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-amber-200/90 font-medium">
-                  Panadería Santa Fé el refugio • Balance, Tarjetas y Salidas
+                  Panadería Santa Fé Zakia • Balance, Tarjetas y Salidas
                 </p>
               </div>
             </div>

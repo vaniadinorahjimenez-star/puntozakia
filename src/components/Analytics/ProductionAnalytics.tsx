@@ -44,7 +44,6 @@ import {
 import { SaleTicket } from '../../types';
 import { 
   calculateProductionStats, 
-  generateSampleWeekTickets,
   BREAD_CATEGORIES, 
   BreadClassificationKey 
 } from '../../utils/productionAnalytics';
@@ -144,18 +143,10 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
     return tickets;
   }, [tickets, periodFilter, todayStr, yesterdayStr, sevenDaysAgoStr, thirtyDaysAgoStr, customDateStart, customDateEnd]);
 
-  // Modo de simulación de 1 semana si hay pocos datos iniciales
-  const [showSimulation, setShowSimulation] = useState<boolean>(() => tickets.length < 5);
+  // Tickets activos para el análisis: 100% REALES de caja (sin simulaciones)
+  const activeTickets = filteredTickets;
 
-  // Tickets activos para el análisis (reales o proyección de ejemplo)
-  const activeTickets = useMemo(() => {
-    if (showSimulation) {
-      return generateSampleWeekTickets(todayStr);
-    }
-    return filteredTickets;
-  }, [showSimulation, todayStr, filteredTickets]);
-
-  // Ejecutar el motor de analítica de producción
+  // Ejecutar el motor de analítica de producción con datos reales
   const stats = useMemo(() => {
     return calculateProductionStats(activeTickets, bolillosPerTray);
   }, [activeTickets, bolillosPerTray]);
@@ -284,21 +275,12 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
             </div>
           )}
 
-          {/* Tickets analizados contador y Simulación */}
+          {/* Tickets analizados contador */}
           <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setShowSimulation(!showSimulation)}
-              className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
-                showSimulation 
-                  ? 'bg-amber-400 text-stone-950 border-amber-300 font-black shadow-sm' 
-                  : 'bg-white/10 hover:bg-white/20 text-amber-100 border-white/20'
-              }`}
-              title="Alternar entre datos reales cobrados o una semana de simulación realista de panadería"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{showSimulation ? '🧪 Proyección de Ejemplo Activa' : '📋 Ver Solo Ventas Reales'}</span>
-            </button>
+            <div className="text-xs font-black px-3 py-1.5 rounded-xl bg-emerald-500/25 text-emerald-100 border border-emerald-400/40 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Ventas 100% Reales de Caja</span>
+            </div>
 
             <button
               type="button"
@@ -317,28 +299,6 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
           </div>
         </div>
       </div>
-
-      {/* Alerta si está en modo simulación para que el panadero sepa cómo funciona */}
-      {showSimulation && (
-        <div className="bg-amber-500/15 border border-amber-500/40 rounded-2xl p-3 px-4 flex items-center justify-between gap-3 text-amber-950 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-base">💡</span>
-            <div>
-              <strong className="font-black text-amber-900">Modo de Aprendizaje / Proyección Activado:</strong>{' '}
-              <span>
-                Estás viendo una semana proyectada con el comportamiento de una panadería típica (~350 bolillos/día, picos matutinos y vespertinos). Puedes desactivarlo en cualquier momento para ver únicamente los tickets reales registrados en tu caja.
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowSimulation(false)}
-            className="text-xs font-black text-amber-900 underline hover:text-amber-950 shrink-0 cursor-pointer"
-          >
-            Ver mis ventas reales ({filteredTickets.length})
-          </button>
-        </div>
-      )}
 
       {/* Banner de Pronóstico del Clima en Zakia CP 76269 y Antojo de Pan Dulce */}
       {weatherInfo && (
@@ -412,7 +372,7 @@ export const ProductionAnalytics: React.FC<ProductionAnalyticsProps> = ({ ticket
       {/* ========================================================================= */}
       {activeSubTab === 'mas_vendidos' && (
         <ProductRankingChart 
-          tickets={showSimulation ? generateSampleWeekTickets(todayStr) : tickets} 
+          tickets={activeTickets} 
           bolillosPerTray={bolillosPerTray} 
         />
       )}

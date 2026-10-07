@@ -13,7 +13,7 @@ import {
 import { REAL_BAKERY_CATALOG, CatalogBreadItem } from '../data/bakeryCatalog';
 
 export const DEFAULT_SETTINGS: Settings = {
-  bakeryName: 'Panaderia Santa Fé el refugio',
+  bakeryName: 'Panaderia Santa Fé Zakia',
   slogan: 'Pan calientito y tradicional.',
   phone: '442 816 3291',
   address: '7:00 am a 10:00 pm',
@@ -574,18 +574,27 @@ export function loadSettings(): Settings {
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Migrate old default address/name/slogan if still present
-      if (!parsed.bakeryName || parsed.bakeryName === 'Panadería Santa Fé' || parsed.bakeryName.includes('"El Refugio"')) {
+      let modified = false;
+      // Migrate old default address/name/slogan if still present or if it mentions Refugio
+      if (
+        !parsed.bakeryName || 
+        parsed.bakeryName === 'Panadería Santa Fé' || 
+        parsed.bakeryName.toLowerCase().includes('refugio')
+      ) {
         parsed.bakeryName = DEFAULT_SETTINGS.bakeryName;
+        modified = true;
       }
       if (!parsed.slogan || parsed.slogan.includes('Abierto') || parsed.slogan.includes('Tradición Artesanal')) {
         parsed.slogan = DEFAULT_SETTINGS.slogan;
+        modified = true;
       }
       if (!parsed.address || parsed.address.includes('Campo Real') || parsed.address.includes('Hidalgo')) {
         parsed.address = DEFAULT_SETTINGS.address;
+        modified = true;
       }
       if (!parsed.phone || parsed.phone.includes('1234')) {
         parsed.phone = DEFAULT_SETTINGS.phone;
+        modified = true;
       }
       if (parsed.quickPrices && Array.isArray(parsed.quickPrices)) {
         const originalLen = parsed.quickPrices.length;
@@ -594,11 +603,14 @@ export function loadSettings(): Settings {
           return num !== 8 && !(num >= 90 && num <= 100);
         });
         if (parsed.quickPrices.length !== originalLen) {
-          try {
-            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
-          } catch {
-            // ignore
-          }
+          modified = true;
+        }
+      }
+      if (modified) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
+        } catch {
+          // ignore
         }
       }
       return { ...DEFAULT_SETTINGS, ...parsed };

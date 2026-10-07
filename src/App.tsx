@@ -53,7 +53,8 @@ import {
   syncWithCloud, 
   fetchAndMergeCloud, 
   onCloudSyncUpdated, 
-  getCloudSyncStatus 
+  getCloudSyncStatus,
+  broadcastRealtimeSale
 } from './services/cloudSyncService';
 
 export default function App() {
@@ -149,14 +150,27 @@ export default function App() {
     };
     window.addEventListener('storage', handleStorageChange);
 
-    // 4. Chequeo periódico en segundo plano cada 30 segundos
+    // 4. Chequeo periódico en segundo plano en TIEMPO REAL (cada 3.5 segundos)
     const syncInterval = setInterval(() => {
       fetchAndMergeCloud();
-    }, 30000);
+    }, 3500);
+
+    // 5. Al regresar a la pestaña o prender la pantalla del celular, actualizar de inmediato
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        fetchAndMergeCloud();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('online', handleVisibilityOrFocus);
 
     return () => {
       unsubscribe();
       window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('online', handleVisibilityOrFocus);
       clearInterval(syncInterval);
     };
   }, []);
@@ -165,7 +179,7 @@ export default function App() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       syncWithCloud({ tickets, orders, customers });
-    }, 1200);
+    }, 600);
     return () => clearTimeout(timeout);
   }, [tickets, orders, customers]);
 
@@ -194,8 +208,11 @@ export default function App() {
       });
     }
 
-    // 3. Disparar sincronización con la nube con los datos actualizados
-    syncWithCloud({ tickets: merged });
+    // 3. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
+    broadcastRealtimeSale(newTicket);
+
+    // 4. Disparar sincronización inmediata con la nube con los datos actualizados
+    syncWithCloud({ tickets: merged, customers: updatedCustomer ? [updatedCustomer] : undefined });
   };
 
   const handleUpdateTicket = (updatedTicket: SaleTicket) => {
