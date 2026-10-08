@@ -112,6 +112,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Asistente de Voz Punto Zákia modal state
   const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
+  const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
 
   // Keyboard shortcut listener ('v' o 'V' para abrir dictado por voz si no está en un input)
   useEffect(() => {
@@ -584,6 +585,27 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         }
       }
       return updated;
+    });
+  };
+
+  // Remove a specific voice item from current counter ticket if the cashier corrects an error
+  const handleRemoveVoiceItemFromTicket = (concepto: string, precio_unitario: number, quantityToRemove: number = 1) => {
+    playBeep(420, 'sawtooth', 0.05);
+    setTicketItems(prev => {
+      const idx = prev.findIndex(it => it.name === concepto && it.price === precio_unitario);
+      if (idx < 0) return prev;
+      const copy = [...prev];
+      const target = copy[idx];
+      const newQty = target.quantity - quantityToRemove;
+      if (newQty <= 0) {
+        return copy.filter((_, i) => i !== idx);
+      }
+      copy[idx] = {
+        ...target,
+        quantity: newQty,
+        total: newQty * target.price
+      };
+      return copy;
     });
   };
 
@@ -1407,15 +1429,35 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                 type="button"
                 onClick={() => {
                   playBeep(700, 'sine', 0.04);
-                  setShowVoiceModal(true);
+                  setShowVoiceModal(prev => !prev);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-orange-600 via-amber-600 to-orange-500 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg font-black text-[11px] shadow-xs hover:shadow-md transition-all active:scale-95 cursor-pointer ring-1 ring-amber-300 shrink-0"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-black text-[11px] shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 ${
+                  isVoiceListening
+                    ? 'bg-red-600 hover:bg-red-700 text-white ring-2 ring-red-400 shadow-red-500/40 animate-pulse'
+                    : 'bg-gradient-to-r from-orange-600 via-amber-600 to-orange-500 hover:from-orange-500 hover:to-amber-500 text-white ring-1 ring-amber-300'
+                }`}
                 title="Dictar productos con tu voz (Atajo tecla 'V')"
               >
-                <Mic className="w-3.5 h-3.5 animate-pulse text-amber-200" />
-                <span className="hidden sm:inline">Dictar por Voz</span>
-                <span className="sm:hidden">Voz</span>
-                <span className="text-[9px] bg-black/20 text-amber-100 px-1 py-0.2 rounded font-mono font-bold">Zákia</span>
+                {isVoiceListening ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                    <span>Escuchando...</span>
+                    {/* Mini animated sound wave inside button */}
+                    <div className="flex items-end gap-0.5 h-3 px-1 bg-black/30 rounded">
+                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-1"></span>
+                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-2"></span>
+                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-3"></span>
+                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-4"></span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-3.5 h-3.5 animate-pulse text-amber-200" />
+                    <span className="hidden sm:inline">Dictar por Voz</span>
+                    <span className="sm:hidden">Voz</span>
+                    <span className="text-[9px] bg-black/20 text-amber-100 px-1 py-0.2 rounded font-mono font-bold">Zákia</span>
+                  </>
+                )}
               </button>
 
               <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-lg border border-slate-200 shadow-2xs">
@@ -1453,6 +1495,44 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               </span>
             </div>
           </div>
+
+          {/* Indicador Visual Prominente de Voz Activa con Onda Sonora en Mostrador */}
+          {isVoiceListening && (
+            <div className="bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-3 py-2 rounded-xl shadow-md border border-red-300/40 flex items-center justify-between mb-2 animate-in slide-in-from-top-1">
+              <div className="flex items-center gap-2.5">
+                {/* Onda Sonora (Equalizador animado) */}
+                <div className="flex items-end gap-1 h-5 px-1.5 py-0.5 bg-black/30 rounded-md shrink-0">
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-1"></span>
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-2"></span>
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-3"></span>
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-4"></span>
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-5"></span>
+                  <span className="w-1 bg-white rounded-full animate-voice-wave-6"></span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span className="font-black text-xs uppercase tracking-wide text-white drop-shadow">
+                      🎙️ MICRÓFONO CONTINUO ACTIVO — Dicta libremente
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-100 font-medium leading-tight">
+                    Palabras clave: <strong>cuenta</strong> 2 de 5, <strong>más</strong> 3 de 10, <strong>5 de 3</strong>, <strong>una nata</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowVoiceModal(false);
+                  setIsVoiceListening(false);
+                }}
+                className="text-xs bg-white/20 hover:bg-white/30 text-white font-bold px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0"
+              >
+                Pausar
+              </button>
+            </div>
+          )}
 
           {/* PASO 1: Multiplicador Selector Bar (1 al 10 + Teclado en 1 sola fila táctil compacta) */}
           <div>
@@ -4131,12 +4211,20 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         </div>
       )}
 
-      {/* Asistente de Voz Punto Zákia Modal */}
+      {/* Asistente de Voz Punto Zákia Modal / Floating Widget */}
       <VoiceAssistantModal
         isOpen={showVoiceModal}
-        onClose={() => setShowVoiceModal(false)}
+        onClose={() => {
+          setShowVoiceModal(false);
+          setIsVoiceListening(false);
+        }}
         onAddItemsToTicket={handleAddVoiceItems}
+        onRemoveItemFromTicket={handleRemoveVoiceItemFromTicket}
         currentTicketCount={ticketItems.length}
+        onListeningStateChange={setIsVoiceListening}
+        onTriggerCheckout={(t) => {
+          playCashSound();
+        }}
       />
     </div>
   );

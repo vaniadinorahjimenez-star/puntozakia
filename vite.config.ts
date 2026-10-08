@@ -415,13 +415,13 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
             return;
           }
 
-          // Voice Assistant Endpoint for Punto Zákia - Panadería Santa Fe
+          // Voice Assistant Endpoint for Punto Zákia - Panadería Santa Fe with Cumulative Session State
           if (req.url && (req.url.startsWith('/api/voice-assistant') || req.url.startsWith('/.netlify/functions/voice-assistant'))) {
             if (req.method === 'OPTIONS') {
               res.writeHead(204, {
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+                'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS'
               });
               return res.end();
             }
@@ -440,78 +440,297 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                   try { payload = JSON.parse(bodyStr); } catch (e) {}
                 }
                 const transcript = (payload.transcript || '').trim();
+                const sessionId = payload.sessionId || 'global_active_session';
+                const action = payload.action; // 'reset' | 'get_state' | 'process'
 
-                const systemInstruction = `Eres el asistente de voz del punto de venta "Punto Zákia" de Panadería Santa Fe.
-Tu único objetivo es interpretar lo que dicta el cajero y devolver EXCLUSIVAMENTE un objeto JSON válido con los productos, subtotales y total calculado.
+                // Global cumulative session storage
+                if (!(global as any).__voice_sessions) {
+                  (global as any).__voice_sessions = new Map();
+                }
+                const sessionsMap: Map<string, any> = (global as any).__voice_sessions;
 
-REGLAS DE PRECIOS Y PRODUCTOS:
-1. Frases como "X de Y" (ejemplo: "2 de 5", "3 de 10", "3 de 12", "5 de 18", "1 de 20"):
-   - X es la cantidad.
-   - Y es el precio unitario del pan ($5, $10, $12, $18, $20, $25, $35, $150).
-   - Concepto: "Pieza $Y".
+                if (action === 'reset' || req.method === 'DELETE') {
+                  sessionsMap.delete(sessionId);
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({
+                    success: true,
+                    action: 'reset',
+                    sessionId,
+                    items: [],
+                    total: 0,
+                    message: 'Sesión reiniciada con éxito'
+                  }));
+                }
 
-2. Acompañamientos y lácteos (precios fijos):
-   - "Lechita" -> precio unitario: 18.00
-   - "Leche" -> precio unitario: 35.00
-   - "Nata" -> precio unitario: 90.00
-   - "Queso" -> precio unitario: 150.00
-   - "Domo" -> precio unitario: 25.00
+                if (action === 'get_state') {
+                  const currentSession = sessionsMap.get(sessionId) || { items: [], total: 0 };
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({
+                    sessionId,
+                    items: currentSession.items,
+                    total: currentSession.total
+                  }));
+                }
 
-3. Postres:
-   - "Postre" -> si no especifican precio, usa 20.00 (o 25.00 si dicen de 25).
+                if (action === 'remove_item') {
+                  let currentSession = sessionsMap.get(sessionId);
+                  if (currentSession && Array.isArray(currentSession.items)) {
+                    const itemIndex = typeof payload.index === 'number' ? payload.index : -1;
+                    if (itemIndex >= 0 && itemIndex < currentSession.items.length) {
+                      currentSession.items.splice(itemIndex, 1);
+                    } else if (payload.concepto) {
+                      const matchIdx = currentSession.items.findIndex(
+                        (it: any) => it.concepto === payload.concepto && (payload.precio_unitario ? it.precio_unitario === payload.precio_unitario : true)
+                      );
+                      if (matchIdx >= 0) {
+                        currentSession.items.splice(matchIdx, 1);
+                      }
+                    }
+                    currentSession.total = Math.round(
+                      currentSession.items.reduce((acc: number, it: any) => acc + it.subtotal, 0) * 100
+                    ) / 100;
+                    currentSession.lastUpdated = Date.now();
+                  }
+                  const safeSession = currentSession || { items: [], total: 0 };
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({
+                    success: true,
+                    action: 'remove_item',
+                    sessionId,
+                    items: safeSession.items,
+                    total: safeSession.total
+                  }));
+                }
 
-4. Si mencionan "un", "una", cuenta como cantidad 1 (ejemplo: "más una nata", "más un queso").
-5. Ignora muletillas ("ehh", "a ver", "ponle", "y").
+                // Retrieve or initialize current session state
+                let currentSession = sessionsMap.get(sessionId);
+                if (!currentSession) {
+                  currentSession = {
+                    sessionId,
+                    items: [],
+                    total: 0,
+                    lastUpdated: Date.now()
+                  };
+                  sessionsMap.set(sessionId, currentSession);
+                }
 
-ESTRUCTURA OBLIGATORIA DEL JSON:
-Responde únicamente con este formato, sin texto antes ni después:
-{
-  "items": [
-    {
-      "cantidad": 2,
-      "concepto": "Pieza $5",
-      "precio_unitario": 5.00,
-      "subtotal": 10.00
-    }
-  ],
-  "total": 10.00
-}`;
+                // If no transcript provided, return current cumulative state
+                if (!transcript) {
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify({
+                    items: currentSession.items,
+                    total: currentSession.total,
+                    isFinalCheckout: false,
+                    shouldCloseMic: false
+                  }));
+                }
 
-                let parsedResult = null;
+                const normTranscript = transcript
+                  .toLowerCase()
+                  .normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/[.,;:¿?¡!]/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
 
-                // Try calling Gemini if GEMINI_API_KEY is available
-                if (process.env.GEMINI_API_KEY && transcript) {
+                // 1. Detect close words: "cerrar", "terminar", "salir", "apagar microfono", "apagar", "listo cerrar"
+                const isCloseWord = /\b(cerrar|terminar|finalizar|salir|apagar microfono|apagar micro|apagar|adios)\b/.test(normTranscript);
+
+                // 2. Detect "cuenta" or "cobrar" (sends final total to POS / triggers checkout)
+                const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(normTranscript);
+
+                // Deterministic local parser for items in current transcript
+                const parseItemsFromText = (text: string) => {
+                  const NUMBER_MAP: Record<string, number> = {
+                    'un': 1, 'uno': 1, 'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4, 'cinco': 5,
+                    'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10, 'once': 11,
+                    'doce': 12, 'trece': 13, 'catorce': 14, 'quince': 15, 'dieciseis': 16,
+                    'dieciséis': 16, 'diecisiete': 17, 'dieciocho': 18, 'diecinueve': 19,
+                    'veinte': 20, 'veintiuno': 21, 'veintidos': 22, 'veintitres': 23,
+                    'veinticuatro': 24, 'veinticinco': 25, 'treinta': 30, 'treinta y cinco': 35,
+                    'cincuenta': 50, 'noventa': 90, 'cien': 100, 'ciento cincuenta': 150
+                  };
+                  const parseNum = (tok: string): number | null => {
+                    if (!tok) return null;
+                    const cleanTok = tok.trim();
+                    const n = parseInt(cleanTok, 10);
+                    if (!isNaN(n) && n > 0) return n;
+                    return NUMBER_MAP[cleanTok] || null;
+                  };
+
+                  let w = text
+                    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar)\b/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                  const parsedItems: Array<{ cantidad: number; concepto: string; precio_unitario: number; subtotal: number }> = [];
+
+                  // Postre
+                  const postreRegex = /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?postres?(?:\s+de\s+(\d+|veinticinco|veinte))?\b/g;
+                  let pMatch: RegExpExecArray | null;
+                  while ((pMatch = postreRegex.exec(w)) !== null) {
+                    const rawQty = pMatch[1];
+                    const qty = rawQty ? (parseNum(rawQty) || 1) : 1;
+                    const rawP = pMatch[2];
+                    let uPrice = 20.00;
+                    if (rawP && parseNum(rawP) === 25) uPrice = 25.00;
+                    parsedItems.push({
+                      cantidad: qty,
+                      concepto: 'Postre',
+                      precio_unitario: uPrice,
+                      subtotal: Math.round(qty * uPrice * 100) / 100
+                    });
+                  }
+                  w = w.replace(postreRegex, ' ');
+
+                  // Fixed products
+                  const fixedProds = [
+                    { name: 'Lechita', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?lechitas?\b/g },
+                    { name: 'Leche', price: 35.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?leches?\b/g },
+                    { name: 'Nata', price: 90.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?natas?\b/g },
+                    { name: 'Queso', price: 150.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?quesos?\b/g },
+                    { name: 'Domo', price: 25.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?domos?\b/g }
+                  ];
+
+                  for (const prod of fixedProds) {
+                    let match: RegExpExecArray | null;
+                    while ((match = prod.regex.exec(w)) !== null) {
+                      const qty = match[1] ? (parseNum(match[1]) || 1) : 1;
+                      parsedItems.push({
+                        cantidad: qty,
+                        concepto: prod.name,
+                        precio_unitario: prod.price,
+                        subtotal: Math.round(qty * prod.price * 100) / 100
+                      });
+                    }
+                    w = w.replace(prod.regex, ' ');
+                  }
+
+                  // X de Y (e.g. 2 de 5, 3 de 10, 5 de 3, 3 de 12)
+                  const qtyWords = 'un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|veinticinco';
+                  const priceWords = 'tres|cinco|ocho|diez|doce|quince|dieciocho|veinte|veinticinco|treinta|treinta y cinco|cincuenta|noventa|cien|ciento cincuenta';
+                  const xDeYRegex = new RegExp(`\\b(\\d+|${qtyWords})\\s+(?:piezas?|panes?|pzas?)?\\s*de\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
+
+                  let xyMatch: RegExpExecArray | null;
+                  while ((xyMatch = xDeYRegex.exec(w)) !== null) {
+                    const qty = parseNum(xyMatch[1]) || 1;
+                    const price = parseNum(xyMatch[2]);
+                    if (price && price > 0) {
+                      parsedItems.push({
+                        cantidad: qty,
+                        concepto: `Pieza $${price}`,
+                        precio_unitario: price,
+                        subtotal: Math.round(qty * price * 100) / 100
+                      });
+                    }
+                  }
+                  w = w.replace(xDeYRegex, ' ');
+
+                  // Standalone "de Y"
+                  const standaloneRegex = new RegExp(`\\bde\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
+                  let stMatch: RegExpExecArray | null;
+                  while ((stMatch = standaloneRegex.exec(w)) !== null) {
+                    const price = parseNum(stMatch[1]);
+                    if (price && price > 0) {
+                      parsedItems.push({
+                        cantidad: 1,
+                        concepto: `Pieza $${price}`,
+                        precio_unitario: price,
+                        subtotal: price
+                      });
+                    }
+                  }
+
+                  return parsedItems;
+                };
+
+                let newlyDetectedItems = parseItemsFromText(normTranscript);
+
+                // Optional Gemini fallback if no items were extracted and GEMINI_API_KEY is present
+                if (newlyDetectedItems.length === 0 && process.env.GEMINI_API_KEY && !isCloseWord) {
                   try {
                     const ai = new GoogleGenAI();
+                    const systemInstruction = `Eres el asistente de voz del punto de venta "Punto Zákia" de Panadería Santa Fe.
+Interpreta lo que dicta el cajero y devuelve EXCLUSIVAMENTE un objeto JSON válido con los productos dictados en esta frase.
+REGLAS:
+- "X de Y" (ej. 2 de 5, 3 de 10) -> X es cantidad, Y es precio ($5, $10, $12, $18, $20, $25, $35, $150). Concepto: "Pieza $Y".
+- "Lechita" -> 18.00, "Leche" -> 35.00, "Nata" -> 90.00, "Queso" -> 150.00, "Domo" -> 25.00
+- "Postre" -> 20.00 (o 25.00 si especifican de 25)
+- "un", "una" -> cantidad 1
+- Ignora muletillas ("ehh", "a ver", "ponle", "y", "más", "cuenta").
+Devuelve: { "items": [{ "cantidad": 2, "concepto": "Pieza $5", "precio_unitario": 5.0, "subtotal": 10.0 }], "total": 10.0 }`;
+
                     const aiResp = await ai.models.generateContent({
                       model: 'gemini-3.8-flash',
-                      contents: `Interpreta lo siguiente que dictó el cajero: "${transcript}"`,
+                      contents: `Interpreta: "${transcript}"`,
                       config: {
                         systemInstruction,
                         responseMimeType: 'application/json',
                       }
                     });
 
-                    const text = aiResp.text?.trim() || '{}';
-                    parsedResult = JSON.parse(text);
+                    const parsed = JSON.parse(aiResp.text?.trim() || '{}');
+                    if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+                      newlyDetectedItems = parsed.items;
+                    }
                   } catch (aiErr) {
-                    console.warn('Error with Gemini API, fallback to regex rules:', aiErr);
+                    console.warn('Gemini parser fallback error:', aiErr);
                   }
                 }
 
-                if (parsedResult && Array.isArray(parsedResult.items) && typeof parsedResult.total === 'number') {
-                  res.writeHead(200, headers);
-                  return res.end(JSON.stringify(parsedResult));
+                // ACCUMULATE STATE: Add newly detected items to the ongoing session
+                if (newlyDetectedItems.length > 0) {
+                  for (const nItem of newlyDetectedItems) {
+                    const existIdx = currentSession.items.findIndex(
+                      (it: any) => it.concepto === nItem.concepto && it.precio_unitario === nItem.precio_unitario
+                    );
+                    if (existIdx >= 0) {
+                      const existing = currentSession.items[existIdx];
+                      const newQty = existing.cantidad + nItem.cantidad;
+                      currentSession.items[existIdx] = {
+                        ...existing,
+                        cantidad: newQty,
+                        subtotal: Math.round(newQty * existing.precio_unitario * 100) / 100
+                      };
+                    } else {
+                      currentSession.items.push({
+                        cantidad: nItem.cantidad,
+                        concepto: nItem.concepto,
+                        precio_unitario: nItem.precio_unitario,
+                        subtotal: Math.round(nItem.cantidad * nItem.precio_unitario * 100) / 100
+                      });
+                    }
+                  }
+
+                  // Recalculate session total
+                  currentSession.total = Math.round(
+                    currentSession.items.reduce((acc: number, it: any) => acc + it.subtotal, 0) * 100
+                  ) / 100;
+                  currentSession.lastUpdated = Date.now();
                 }
 
-                // Fallback / deterministic calculation
-                // Simple parser inside server in case AI key is not configured
+                const responseData = {
+                  sessionId,
+                  // The items added in this specific turn:
+                  newItems: newlyDetectedItems,
+                  // The complete cumulative items in the session:
+                  items: currentSession.items,
+                  // The overall cumulative total:
+                  total: currentSession.total,
+                  // Trigger sending final total / checkout in POS when 'cuenta' is spoken:
+                  isFinalCheckout: isCuentaFinal,
+                  // Close recognition only when user says a closing word:
+                  shouldCloseMic: isCloseWord,
+                  transcript
+                };
+
+                // If close word said, reset session
+                if (isCloseWord) {
+                  sessionsMap.delete(sessionId);
+                }
+
                 res.writeHead(200, headers);
-                return res.end(JSON.stringify({
-                  items: [],
-                  total: 0,
-                  fallback: true
-                }));
+                return res.end(JSON.stringify(responseData));
               } catch (err: any) {
                 res.writeHead(500, headers);
                 return res.end(JSON.stringify({ error: err.message }));

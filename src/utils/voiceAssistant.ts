@@ -13,8 +13,12 @@ export interface VoiceCommandItem {
 export interface VoiceCommandResult {
   items: VoiceCommandItem[];
   total: number;
+  newItems?: VoiceCommandItem[];
   rawTranscript?: string;
-  source?: 'local_rules' | 'gemini_ai';
+  isFinalCheckout?: boolean;
+  shouldCloseMic?: boolean;
+  sessionId?: string;
+  source?: 'local_rules' | 'gemini_ai' | 'session_api';
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -57,7 +61,7 @@ const NUMBER_WORDS: Record<string, number> = {
 };
 
 // Normalize text for parsing
-function normalizeSpokenText(text: string): string {
+export function normalizeSpokenText(text: string): string {
   return text
     .toLowerCase()
     .normalize('NFD')
@@ -67,7 +71,7 @@ function normalizeSpokenText(text: string): string {
     .trim();
 }
 
-function parseNumber(token: string): number | null {
+export function parseNumber(token: string): number | null {
   if (!token) return null;
   const trimmed = token.trim();
   const directNum = parseInt(trimmed, 10);
@@ -79,6 +83,7 @@ function parseNumber(token: string): number | null {
 /**
  * Deterministic local parser adhering strictly to the user's rules:
  * 1. "X de Y" (e.g., "2 de 5", "3 de 10", "3 de 12", "5 de 18", "1 de 20", etc.) -> Concept: "Pieza $Y"
+ *    - X is quantity, Y is unit price.
  * 2. Fixed products:
  *    - Lechita -> 18.00
  *    - Leche -> 35.00
@@ -86,26 +91,32 @@ function parseNumber(token: string): number | null {
  *    - Queso -> 150.00
  *    - Domo -> 25.00
  * 3. Postres:
- *    - Postre -> 20.00 (o 25.00 si dicen "de 25")
+ *    - Postre -> 20.00 (or 25.00 if they say "de 25")
  * 4. "un", "una" -> 1
- * 5. Ignore filler words: "ehh", "a ver", "ponle", "y", "mas", "favor"
+ * 5. Ignore filler words: "ehh", "a ver", "ponle", "y", "por favor", etc.
+ * 6. "mas" / "más" is used as a connector to sum to current sale.
+ * 7. "cuenta" commands send total to POS.
+ * 8. Closing words like "cerrar", "terminar", "apagar", "salir" close the recognition.
  */
 export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult {
   const norm = normalizeSpokenText(transcript);
   const items: VoiceCommandItem[] = [];
 
-  // Working copy of text
+  // Detect closing words
+  const isCloseWord = /\b(cerrar|terminar|finalizar|salir|apagar microfono|apagar micro|apagar|adios)\b/.test(norm);
+
+  // Detect 'cuenta' command
+  const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(norm);
+
   let workingText = norm;
 
-  // 1. Remove filler words that can be ignored
-  // "ehh", "eh", "a ver", "ponle", "por favor", "porfa"
+  // Remove filler and activation words
   workingText = workingText
-    .replace(/\b(ehh|eh|a ver|ponle|por favor|porfa|dame|agrega|sumale|sumar|favor)\b/g, ' ')
+    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 2. Extract "Postre" variations first (to capture "postre de 25" or "postre de 20")
-  // Matches: "(cantidad)? postre(s)? (de (25|20))?"
+  // 1. Extract "Postre" variations
   const postreRegex = /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?postres?(?:\s+de\s+(\d+|veinticinco|veinte))?\b/g;
   let postreMatch: RegExpExecArray | null;
   while ((postreMatch = postreRegex.exec(workingText)) !== null) {
@@ -126,12 +137,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   }
   workingText = workingText.replace(postreRegex, ' ');
 
-  // 3. Extract Fixed Lácteos & Acompañamientos:
-  // "Lechita" -> 18.00
-  // "Leche" -> 35.00 (not lechita)
-  // "Nata" -> 90.00
-  // "Queso" -> 150.00
-  // "Domo" -> 25.00
+  // 2. Extract Fixed Lácteos & Acompañamientos
   const fixedProductsConfig: Array<{ name: string; price: number; regex: RegExp }> = [
     {
       name: 'Lechita',
@@ -175,10 +181,11 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
     workingText = workingText.replace(prod.regex, ' ');
   }
 
-  // 4. Extract "X de Y" (e.g. "2 de 5", "3 de 10", "3 de 12", "5 de 18", "1 de 20", "dos de veinticinco", etc.)
-  // May include words like "panes de", "piezas de"
-  // Patterns like: "(\d+|words) (?:piezas?|panes?)? de (?:a\s+)?(\$?\d+|words)"
-  const xDeYRegex = /\b(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+(?:piezas?|panes?|pzas?)?\s*de\s+(?:a\s+)?\$?(\d+|cinco|ocho|diez|doce|dieciocho|veinte|veinticinco|treinta y cinco|noventa|cien|ciento cincuenta)\b/g;
+  // 3. Extract "X de Y" (e.g. "2 de 5", "3 de 10", "3 de 12", "5 de 18", "1 de 20", "5 de 3", "2 de 25")
+  const qtyWords = 'un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|veinticinco';
+  const priceWords = 'tres|cinco|ocho|diez|doce|quince|dieciocho|veinte|veinticinco|treinta|treinta y cinco|cincuenta|noventa|cien|ciento cincuenta';
+
+  const xDeYRegex = new RegExp(`\\b(\\d+|${qtyWords})\\s+(?:piezas?|panes?|pzas?)?\\s*de\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
 
   let xDeYMatch: RegExpExecArray | null;
   while ((xDeYMatch = xDeYRegex.exec(workingText)) !== null) {
@@ -197,8 +204,8 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   }
   workingText = workingText.replace(xDeYRegex, ' ');
 
-  // 5. Fallback for standalone "de 5", "de 10" (implied quantity 1)
-  const standaloneDeRegex = /\bde\s+(?:a\s+)?\$?(\d+|cinco|ocho|diez|doce|dieciocho|veinte|veinticinco|treinta y cinco|noventa|cien|ciento cincuenta)\b/g;
+  // 4. Standalone "de Y" (implied quantity 1, e.g. "mas de 10", "y de 5")
+  const standaloneDeRegex = new RegExp(`\\bde\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
   let standaloneMatch: RegExpExecArray | null;
   while ((standaloneMatch = standaloneDeRegex.exec(workingText)) !== null) {
     const rawPrice = standaloneMatch[1];
@@ -212,51 +219,105 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
       });
     }
   }
+  workingText = workingText.replace(standaloneDeRegex, ' ');
 
   // Calculate total
   const total = Math.round(items.reduce((acc, curr) => acc + curr.subtotal, 0) * 100) / 100;
 
   return {
     items,
+    newItems: items,
     total,
+    isFinalCheckout: isCuentaFinal,
+    shouldCloseMic: isCloseWord,
     rawTranscript: transcript,
     source: 'local_rules'
   };
 }
 
 /**
- * Call server-side Gemini API with exact system instructions provided by user.
- * Falls back transparently to local parser if offline or error.
+ * Call server-side /api/voice-assistant with session accumulation.
+ * Keeps an ongoing cumulative state on the server while returning newItems and overall items/total.
  */
-export async function parseVoiceCommandWithAI(transcript: string): Promise<VoiceCommandResult> {
+export async function parseVoiceCommandWithAI(
+  transcript: string,
+  sessionId: string = 'pos_main_session'
+): Promise<VoiceCommandResult> {
   const localResult = parseVoiceCommandLocally(transcript);
 
-  // If local parser found items and confident, we can return it directly or attempt server AI
   try {
     const response = await fetch('/api/voice-assistant', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ transcript })
+      body: JSON.stringify({
+        transcript,
+        sessionId
+      })
     });
 
     if (response.ok) {
       const data = await response.json();
-      if (data && Array.isArray(data.items) && typeof data.total === 'number') {
-        return {
-          items: data.items,
-          total: data.total,
-          rawTranscript: transcript,
-          source: 'gemini_ai'
-        };
-      }
+      return {
+        items: Array.isArray(data.items) ? data.items : localResult.items,
+        newItems: Array.isArray(data.newItems) && data.newItems.length > 0 ? data.newItems : localResult.items,
+        total: typeof data.total === 'number' ? data.total : localResult.total,
+        isFinalCheckout: typeof data.isFinalCheckout === 'boolean' ? data.isFinalCheckout : localResult.isFinalCheckout,
+        shouldCloseMic: typeof data.shouldCloseMic === 'boolean' ? data.shouldCloseMic : localResult.shouldCloseMic,
+        rawTranscript: transcript,
+        sessionId: data.sessionId || sessionId,
+        source: 'session_api'
+      };
     }
   } catch (err) {
-    console.warn('Voice AI server call failed, using deterministic local parser:', err);
+    console.warn('Voice session endpoint fallback to local rules:', err);
   }
 
   return localResult;
+}
+
+/**
+ * Reset server voice session state
+ */
+export async function resetVoiceSession(sessionId: string = 'pos_main_session'): Promise<void> {
+  try {
+    await fetch('/api/voice-assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reset', sessionId })
+    });
+  } catch (e) {
+    console.warn('Could not reset session on server:', e);
+  }
+}
+
+/**
+ * Remove an item from the server voice session by index or name
+ */
+export async function removeVoiceSessionItem(
+  sessionId: string,
+  index?: number,
+  concepto?: string,
+  precio_unitario?: number
+): Promise<{ items: VoiceCommandItem[]; total: number } | null> {
+  try {
+    const res = await fetch('/api/voice-assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'remove_item', sessionId, index, concepto, precio_unitario })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        items: Array.isArray(data.items) ? data.items : [],
+        total: typeof data.total === 'number' ? data.total : 0
+      };
+    }
+  } catch (e) {
+    console.warn('Could not remove item from server session:', e);
+  }
+  return null;
 }
 
 /**
@@ -273,8 +334,9 @@ export function createSpeechRecognitionInstance(): any | null {
   if (!SpeechRecognitionClass) return null;
 
   const recognition = new SpeechRecognitionClass();
-  recognition.continuous = false; // Capture phrase and finish on pause
-  recognition.interimResults = true; // Show interim words in real time
+  // Set continuous to true so the microphone stays ON continuously while dictating items!
+  recognition.continuous = true;
+  recognition.interimResults = true;
   recognition.lang = 'es-MX'; // Mexican Spanish tailored for bakery cashier
   return recognition;
 }

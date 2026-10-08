@@ -4,21 +4,23 @@ import {
   MicOff, 
   X, 
   Sparkles, 
-  Check, 
   Plus, 
-  Volume2, 
   Code2, 
-  RotateCcw, 
   HelpCircle, 
   Send,
   Zap,
   ShoppingBag,
-  Info,
-  CheckCircle2
+  Minus,
+  Maximize2,
+  Trash2,
+  Radio,
+  CheckCircle,
+  RotateCcw
 } from 'lucide-react';
 import { 
   parseVoiceCommandLocally, 
   parseVoiceCommandWithAI, 
+  resetVoiceSession,
   createSpeechRecognitionInstance, 
   isSpeechRecognitionSupported, 
   VoiceCommandResult, 
@@ -31,42 +33,56 @@ interface VoiceAssistantModalProps {
   onClose: () => void;
   onAddItemsToTicket: (items: VoiceCommandItem[]) => void;
   currentTicketCount?: number;
+  onListeningStateChange?: (isListening: boolean) => void;
+  onTriggerCheckout?: (total: number) => void;
 }
 
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   isOpen,
   onClose,
   onAddItemsToTicket,
-  currentTicketCount = 0
+  currentTicketCount = 0,
+  onListeningStateChange,
+  onTriggerCheckout
 }) => {
   const [isListening, setIsListening] = useState<boolean>(false);
-  const [transcript, setTranscript] = useState<string>('');
-  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [activeSessionText, setActiveSessionText] = useState<string>('');
+  const [interimText, setInterimText] = useState<string>('');
+  const [recentTranscripts, setRecentTranscripts] = useState<Array<{ text: string; itemsCount: number; total: number; time: string }>>([]);
   const [manualInput, setManualInput] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [parsedResult, setParsedResult] = useState<VoiceCommandResult | null>(null);
   const [autoAddToTicket, setAutoAddToTicket] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [successToast, setSuccessToast] = useState<string>('');
-  const [showJsonView, setShowJsonView] = useState<boolean>(true);
+  const [showJsonView, setShowJsonView] = useState<boolean>(false);
   const [showHelpGuide, setShowHelpGuide] = useState<boolean>(false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [sessionTotalAccumulated, setSessionTotalAccumulated] = useState<number>(0);
+  const [sessionItemsAccumulated, setSessionItemsAccumulated] = useState<VoiceCommandItem[]>([]);
 
   const recognitionRef = useRef<any>(null);
+  const shouldKeepListeningRef = useRef<boolean>(false);
+  const sessionIdRef = useRef<string>(`session_${Date.now()}`);
   const speechSupported = isSpeechRecognitionSupported();
 
-  // Test chips for instant testing
+  // Inform parent component about listening state
+  useEffect(() => {
+    onListeningStateChange?.(isListening);
+  }, [isListening, onListeningStateChange]);
+
+  // Quick test phrases for 1-touch testing
   const examplePhrases = [
-    '2 de 5',
-    '3 de 10 y una lechita',
-    '3 de 12 y una nata',
-    '5 de 18 y un domo',
-    '1 de 20 y un queso',
-    'un postre de 25 y 2 de 5',
-    'más una nata y 4 de 10'
+    '2 de 5 más 3 de 10',
+    'más 5 de 3',
+    'más una nata y un queso',
+    'cuenta',
+    'cerrar'
   ];
 
   // Stop listening helper
   const stopListening = () => {
+    shouldKeepListeningRef.current = false;
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -77,6 +93,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setIsListening(false);
   };
 
+  // Reset entire current voice session
+  const handleResetSession = async () => {
+    playBeep(450, 'sawtooth', 0.05);
+    setSessionItemsAccumulated([]);
+    setSessionTotalAccumulated(0);
+    setParsedResult(null);
+    setActiveSessionText('');
+    setErrorMessage('');
+    await resetVoiceSession(sessionIdRef.current);
+    sessionIdRef.current = `session_${Date.now()}`;
+    setSuccessToast('Sesión de voz reiniciada');
+    setTimeout(() => setSuccessToast(''), 2500);
+  };
+
   // Process text and generate JSON + optionally add to ticket
   const processDictation = async (rawText: string, shouldAutoAdd: boolean = autoAddToTicket) => {
     if (!rawText.trim()) return;
@@ -84,32 +114,88 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setErrorMessage('');
 
     try {
-      // Parse with deterministic rules and AI fallback
-      const result = await parseVoiceCommandWithAI(rawText);
+      // Call server endpoint with cumulative session management
+      const result = await parseVoiceCommandWithAI(rawText, sessionIdRef.current);
       setParsedResult(result);
 
-      if (result.items.length === 0) {
-        setErrorMessage('No se detectaron productos válidos. Prueba con frases como "2 de 5", "3 de 10", "una lechita", etc.');
-        playBeep(350, 'sawtooth', 0.15);
+      // 1. Check if user spoke a close word (e.g. "cerrar", "terminar", "apagar")
+      if (result.shouldCloseMic) {
+        playBeep(350, 'sawtooth', 0.1);
+        setSuccessToast('Micrófono cerrado por comando de voz');
+        stopListening();
+        setTimeout(() => {
+          setSuccessToast('');
+          onClose();
+        }, 1200);
+        return;
+      }
+
+      // Update session accumulated state
+      if (result.items && result.items.length > 0) {
+        setSessionItemsAccumulated(result.items);
+        setSessionTotalAccumulated(result.total);
+      }
+
+      const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
+
+      // 2. Check if user gave the "cuenta" command to send final total to POS
+      if (result.isFinalCheckout) {
+        playCashSound();
+        playBeep(950, 'sine', 0.1);
+        const finalTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
+
+        // If there were also items dictated in the same sentence (e.g. "cuenta 2 de 5")
+        if (itemsToAdd.length > 0 && shouldAutoAdd) {
+          onAddItemsToTicket(itemsToAdd);
+        }
+
+        setSuccessToast(`¡Cuenta enviada al POS! Total: $${finalTotal.toFixed(2)}`);
+        if (onTriggerCheckout) {
+          onTriggerCheckout(finalTotal);
+        }
+        setTimeout(() => setSuccessToast(''), 4000);
+
+        // Keep mic active as requested ("manteniendo el reconocimiento activo hasta que se diga una palabra de cierre")
+        return;
+      }
+
+      // 3. Normal items dictation
+      if (itemsToAdd.length === 0) {
+        setErrorMessage(`No se identificó producto en: "${rawText}". Di: "2 de 5", "más 3 de 10", "cuenta" o "cerrar".`);
+        playBeep(350, 'sawtooth', 0.12);
       } else {
         playBeep(880, 'sine', 0.08);
 
+        // Record history
+        const now = new Date();
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        setRecentTranscripts(prev => [
+          { text: rawText, itemsCount: itemsToAdd.length, total: result.total, time: timeStr },
+          ...prev.slice(0, 9)
+        ]);
+
         if (shouldAutoAdd) {
-          onAddItemsToTicket(result.items);
+          onAddItemsToTicket(itemsToAdd);
           playCashSound();
-          setSuccessToast(`¡${result.items.length} productos sumados al ticket! ($${result.total.toFixed(2)})`);
+          setSuccessToast(`+${itemsToAdd.length} añadidos al ticket ($${itemsToAdd.reduce((a, b) => a + b.subtotal, 0).toFixed(2)})`);
           setTimeout(() => setSuccessToast(''), 3000);
         }
       }
     } catch (err: any) {
       console.error('Error processing voice:', err);
-      // Fallback local
       const fallback = parseVoiceCommandLocally(rawText);
       setParsedResult(fallback);
+
+      if (fallback.shouldCloseMic) {
+        stopListening();
+        onClose();
+        return;
+      }
+
       if (fallback.items.length > 0 && shouldAutoAdd) {
         onAddItemsToTicket(fallback.items);
         playCashSound();
-        setSuccessToast(`¡Sumado al ticket! ($${fallback.total.toFixed(2)})`);
+        setSuccessToast(`+${fallback.items.length} sumados ($${fallback.total.toFixed(2)})`);
         setTimeout(() => setSuccessToast(''), 3000);
       }
     } finally {
@@ -117,19 +203,22 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Start listening
+  // Start continuous listening
   const startListening = () => {
     if (!speechSupported) {
-      setErrorMessage('El reconocimiento de voz por micrófono no está disponible en este navegador. Puedes escribir o usar los botones de prueba abajo.');
+      setErrorMessage('Reconocimiento por voz no disponible en este navegador. Escribe la frase o usa los botones rápidos.');
       return;
     }
 
-    stopListening();
+    // Set flag so if Chrome pauses or onend fires unexpectedly, we restart automatically
+    shouldKeepListeningRef.current = true;
     setErrorMessage('');
-    setTranscript('');
-    setInterimTranscript('');
 
     try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch {}
+      }
+
       const recognition = createSpeechRecognitionInstance();
       if (!recognition) {
         setErrorMessage('No se pudo inicializar el micrófono.');
@@ -145,46 +234,62 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
       recognition.onresult = (event: any) => {
         let interim = '';
-        let final = '';
+        let newlyFinalizedChunk = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            final += event.results[i][0].transcript;
+          const res = event.results[i];
+          if (res.isFinal) {
+            newlyFinalizedChunk += res[0].transcript;
           } else {
-            interim += event.results[i][0].transcript;
+            interim += res[0].transcript;
           }
         }
 
-        if (final) {
-          const cleanFinal = final.trim();
-          setTranscript(cleanFinal);
-          setInterimTranscript('');
-          processDictation(cleanFinal);
+        if (newlyFinalizedChunk.trim()) {
+          const cleanChunk = newlyFinalizedChunk.trim();
+          setActiveSessionText(cleanChunk);
+          setInterimText('');
+          processDictation(cleanChunk);
         } else {
-          setInterimTranscript(interim);
+          setInterimText(interim);
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Speech recognition error:', event.error);
+        console.warn('Speech recognition event error:', event.error);
         if (event.error === 'not-allowed') {
-          setErrorMessage('Permiso de micrófono bloqueado. Haz clic en el ícono de candado o cámara en la barra de tu navegador y selecciona "Permitir micrófono".');
+          shouldKeepListeningRef.current = false;
+          setErrorMessage('Permiso de micrófono bloqueado. Haz clic en el candado del navegador y permite el micrófono.');
+          setIsListening(false);
         } else if (event.error === 'no-speech') {
-          setErrorMessage('No se escuchó audio. Intenta hablar más cerca del micrófono.');
+          // Normal pause in talking, don't stop the persistent session
         } else {
-          setErrorMessage(`Error de voz: ${event.error}`);
+          console.warn('Temporary voice error:', event.error);
         }
-        setIsListening(false);
       };
 
       recognition.onend = () => {
-        setIsListening(false);
+        // CONTINUOUS LISTENING: If the user didn't explicitly pause/close, restart automatically!
+        if (shouldKeepListeningRef.current && isOpen) {
+          try {
+            recognition.start();
+          } catch {
+            // Wait briefly and retry if browser is resetting
+            setTimeout(() => {
+              if (shouldKeepListeningRef.current && isOpen) {
+                try { recognition.start(); } catch {}
+              }
+            }, 250);
+          }
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognition.start();
     } catch (err: any) {
       console.error(err);
-      setErrorMessage('No se pudo acceder al micrófono. Verifica los permisos de tu navegador.');
+      setErrorMessage('No se pudo iniciar el micrófono. Revisa los permisos.');
       setIsListening(false);
     }
   };
@@ -198,361 +303,496 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Keyboard shortcut listener when modal is open
+  // Auto-start listening as soon as modal opens, and stop on close
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      shouldKeepListeningRef.current = true;
+      const timer = setTimeout(() => {
+        startListening();
+      }, 150);
+      return () => clearTimeout(timer);
+    } else {
       stopListening();
-      return;
     }
+  }, [isOpen]);
 
+  // Keyboard shortcut listener when widget is open
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape to close
+      if (!isOpen) return;
       if (e.key === 'Escape') {
         onClose();
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      stopListening();
-    };
-  }, [isOpen]);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
+  // Render MINIMIZED FLOATING PILL (Docked at bottom right)
+  if (isMinimized) {
+    return (
+      <div 
+        className="fixed bottom-2 right-2 sm:bottom-3 sm:right-3 z-50 bg-slate-900/95 backdrop-blur-md text-white px-2.5 py-1.5 rounded-2xl shadow-2xl border-2 border-amber-500 flex items-center gap-2 animate-in slide-in-from-bottom-2 duration-200"
+      >
+        <button
+          type="button"
+          onClick={toggleListening}
+          className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-slate-700 text-slate-300'
+          }`}
+          title={isListening ? 'Micrófono encendido continuo' : 'Encender micrófono'}
+        >
+          {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+        </button>
+
+        <div className="flex flex-col">
+          <span className="text-[11px] font-black text-amber-300 leading-tight">
+            Voz Activa (Acumulativa)
+          </span>
+          <span className="text-[9px] text-slate-400 leading-none">
+            {isListening ? 'Escuchando continuo...' : 'Pausado'}
+          </span>
+        </div>
+
+        {sessionTotalAccumulated > 0 && (
+          <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-emerald-500/30">
+            ${sessionTotalAccumulated.toFixed(2)}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setIsMinimized(false)}
+          className="p-1 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white transition-colors cursor-pointer ml-1"
+          title="Ver panel completo"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+          title="Cerrar asistente"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  // Render COMPACT FLOATING DOCK (Ubicado hasta abajo a la derecha donde NO estorba ticket ni catálogo)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
-        
-        {/* Header */}
-        <div className="bg-gradient-to-r from-slate-900 via-amber-950 to-orange-950 text-white px-5 py-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg transition-all ${
-              isListening ? 'bg-red-500 animate-pulse ring-4 ring-red-400/40' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950'
-            }`}>
-              <Mic className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-black text-lg text-amber-200 leading-tight">
-                  Asistente de Voz Punto Zákia
-                </h3>
-                <span className="bg-amber-400/20 text-amber-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-amber-400/30">
-                  Santa Fe
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 font-medium">
-                Dicta productos y precios para sumarlos directamente al ticket
-              </p>
-            </div>
+    <div 
+      className="fixed bottom-2 right-2 sm:bottom-3 sm:right-3 z-50 w-[320px] sm:w-[350px] max-w-[calc(100vw-1rem)] bg-white/98 backdrop-blur-md rounded-2xl shadow-2xl border-2 border-amber-500 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-bottom-2 duration-200"
+      style={{ boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.45), 0 0 16px rgba(245, 158, 11, 0.35)' }}
+    >
+      
+      {/* Header Compacto */}
+      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 text-white px-3 py-2 flex items-center justify-between shrink-0 border-b border-amber-900/40">
+        <div className="flex items-center gap-2">
+          <div className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all shadow-inner ${
+            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-slate-700 text-slate-300'
+          }`}>
+            <Mic className="w-4 h-4" />
           </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setShowHelpGuide(!showHelpGuide)}
-              className="p-2 text-slate-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
-              title="Instrucciones de voz"
-            >
-              <HelpCircle className="w-5 h-5" />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 text-slate-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
-              title="Cerrar modal"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-
-          {/* Success / Added Toast */}
-          {successToast && (
-            <div className="bg-emerald-500 text-white px-4 py-3 rounded-2xl shadow-md flex items-center gap-3 animate-in zoom-in-95 duration-150">
-              <CheckCircle2 className="w-6 h-6 shrink-0" />
-              <div className="flex-1 font-bold text-sm">{successToast}</div>
-            </div>
-          )}
-
-          {/* Error Message */}
-          {errorMessage && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-2xl text-xs sm:text-sm flex items-start gap-2.5">
-              <Info className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <div className="flex-1">{errorMessage}</div>
-            </div>
-          )}
-
-          {/* Help Guide Accordion */}
-          {showHelpGuide && (
-            <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-2xl text-xs sm:text-sm text-amber-950 space-y-2 animate-in slide-in-from-top-2">
-              <div className="font-extrabold text-amber-900 flex items-center gap-1.5 text-sm">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                Reglas de Interpretación de Voz (Punto Zákia)
-              </div>
-              <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                <li><strong>"X de Y"</strong>: Cantidad X y precio Y (ej. <em>"2 de 5"</em> = 2 piezas de $5 = $10, <em>"3 de 10"</em> = 3 piezas de $10).</li>
-                <li><strong>Precios fijos</strong>: Lechita ($18), Leche ($35), Nata ($90), Queso ($150), Domo ($25).</li>
-                <li><strong>Postre</strong>: $20.00 base (o $25.00 si dices <em>"postre de 25"</em>).</li>
-                <li><strong>"un" / "una"</strong>: Se cuenta como 1 (ej. <em>"más una nata"</em> = 1 nata).</li>
-                <li><strong>Ignora muletillas</strong>: Palabras como <em>"ehh", "a ver", "ponle", "y"</em> se limpian automáticamente.</li>
-              </ul>
-            </div>
-          )}
-
-          {/* Big Interactive Mic Action Card */}
-          <div className="bg-gradient-to-b from-slate-50 to-orange-50/40 rounded-3xl p-5 border-2 border-slate-200 text-center space-y-4">
-            
-            {/* Pulsing Mic Button */}
-            <div className="flex flex-col items-center justify-center">
-              <button
-                type="button"
-                onClick={toggleListening}
-                className={`relative w-24 h-24 sm:w-28 sm:h-28 rounded-full flex flex-col items-center justify-center shadow-xl transition-all duration-200 cursor-pointer ${
-                  isListening
-                    ? 'bg-red-600 text-white scale-105 ring-8 ring-red-400/40 shadow-red-500/50'
-                    : 'bg-gradient-to-tr from-amber-600 to-orange-500 hover:from-amber-500 hover:to-orange-400 text-white shadow-orange-500/30 hover:scale-105 active:scale-95'
-                }`}
-              >
-                {isListening ? (
-                  <>
-                    <Mic className="w-10 h-10 animate-bounce" />
-                    <span className="text-[10px] font-black uppercase mt-1 tracking-wider">Escuchando</span>
-                  </>
-                ) : (
-                  <>
-                    <Mic className="w-10 h-10" />
-                    <span className="text-[10px] font-black uppercase mt-1 tracking-wider">Toca para Hablar</span>
-                  </>
-                )}
-
-                {/* Animated wave rings when listening */}
-                {isListening && (
-                  <span className="absolute inset-0 rounded-full border-4 border-red-400 animate-ping opacity-60 pointer-events-none" />
-                )}
-              </button>
-
-              <div className="mt-3">
-                <span className={`text-xs sm:text-sm font-bold ${isListening ? 'text-red-600 animate-pulse' : 'text-slate-600'}`}>
-                  {isListening ? '🎙️ Habla ahora: "2 de 5, 3 de 10 y una lechita"...' : 'Presiona el micrófono y dicta tus productos'}
-                </span>
-              </div>
-            </div>
-
-            {/* Live Transcript Box */}
-            <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-inner min-h-[56px] flex items-center justify-center">
-              {transcript || interimTranscript ? (
-                <div className="text-slate-900 font-bold text-sm sm:text-base">
-                  <span>{transcript}</span>
-                  {interimTranscript && (
-                    <span className="text-slate-400 italic font-medium ml-1">
-                      {interimTranscript}...
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <span className="text-slate-400 text-xs italic">
-                  Aquí aparecerá lo que digas con tu voz en tiempo real...
-                </span>
-              )}
-            </div>
-
-            {/* Auto-sum toggle switch */}
-            <div className="flex items-center justify-center gap-3 pt-1">
-              <label className="flex items-center gap-2 cursor-pointer select-none bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
-                <input
-                  type="checkbox"
-                  checked={autoAddToTicket}
-                  onChange={(e) => setAutoAddToTicket(e.target.checked)}
-                  className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
-                />
-                <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-amber-600" />
-                  Sumar automáticamente al ticket al terminar frase
-                </span>
-              </label>
-            </div>
-          </div>
-
-          {/* Quick Clickable Test Phrases (Prueba Rápida con 1 Clic) */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-600 px-1">
-              <span className="flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                Frases de ejemplo para probar con 1 toque:
+          <div>
+            <div className="flex items-center gap-1.5 leading-none">
+              <h4 className="font-black text-xs text-amber-200">
+                Voz Punto Zákia
+              </h4>
+              <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-black uppercase px-1 py-0.2 rounded border border-emerald-500/30">
+                Acumulativo
               </span>
-              <span className="text-[10px] text-slate-400 font-semibold">Toca cualquiera</span>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {examplePhrases.map((phrase, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => {
-                    setTranscript(phrase);
-                    processDictation(phrase, true);
-                  }}
-                  className="text-xs bg-slate-100 hover:bg-orange-100 text-slate-800 hover:text-orange-950 font-bold px-2.5 py-1.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer active:scale-95"
-                >
-                  "{phrase}"
-                </button>
-              ))}
-            </div>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5 leading-none">
+              {isListening ? 'Micrófono continuo prendido' : 'Micrófono pausado'}
+            </p>
           </div>
-
-          {/* Manual Input Fallback */}
-          <div className="space-y-1.5 pt-1">
-            <span className="text-xs font-bold text-slate-600 px-1">
-              O escribe la frase si tu micrófono no tiene permisos:
-            </span>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={manualInput}
-                onChange={(e) => setManualInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setTranscript(manualInput);
-                    processDictation(manualInput);
-                    setManualInput('');
-                  }
-                }}
-                placeholder="Ejemplo: 2 de 5, una lechita y un queso"
-                className="flex-1 bg-white border border-slate-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 rounded-xl px-3.5 py-2 text-sm text-slate-900 font-medium placeholder-slate-400 outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  if (manualInput.trim()) {
-                    setTranscript(manualInput);
-                    processDictation(manualInput);
-                    setManualInput('');
-                  }
-                }}
-                className="bg-slate-900 hover:bg-orange-600 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                Interpretar
-              </button>
-            </div>
-          </div>
-
-          {/* Results Card */}
-          {parsedResult && parsedResult.items.length > 0 && (
-            <div className="bg-slate-900 text-white rounded-3xl p-4 sm:p-5 shadow-xl border border-slate-800 space-y-3 animate-in zoom-in-95">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="w-5 h-5 text-amber-400" />
-                  <span className="font-extrabold text-sm text-slate-200">
-                    Productos Interpretados ({parsedResult.items.length})
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-                    {parsedResult.source === 'gemini_ai' ? '✨ Gemini AI' : '⚡ Reglas Zákia'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowJsonView(!showJsonView)}
-                    className="text-xs text-amber-300 hover:text-white flex items-center gap-1 font-bold cursor-pointer"
-                  >
-                    <Code2 className="w-3.5 h-3.5" />
-                    {showJsonView ? 'Ocultar JSON' : 'Ver JSON'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Items Breakdown Table */}
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {parsedResult.items.map((item, idx) => (
-                  <div 
-                    key={idx}
-                    className="flex items-center justify-between p-2 rounded-xl bg-slate-800/80 border border-slate-700/60 text-xs sm:text-sm"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 font-black font-mono flex items-center justify-center text-xs">
-                        {item.cantidad}
-                      </span>
-                      <span className="font-bold text-white">
-                        {item.concepto}
-                      </span>
-                      <span className="text-slate-400 text-xs">
-                        @ ${item.precio_unitario.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="font-mono font-black text-amber-300 text-sm">
-                      ${item.subtotal.toFixed(2)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Total & Action Button */}
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                    Total Calculado
-                  </div>
-                  <div className="text-2xl font-black font-mono text-emerald-400">
-                    ${parsedResult.total.toFixed(2)}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onAddItemsToTicket(parsedResult.items);
-                    playCashSound();
-                    setSuccessToast(`¡${parsedResult.items.length} productos sumados al ticket!`);
-                    setTimeout(() => setSuccessToast(''), 3000);
-                  }}
-                  className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-black px-5 py-2.5 rounded-2xl shadow-lg flex items-center gap-2 text-sm transition-all cursor-pointer active:scale-95"
-                >
-                  <Plus className="w-4 h-4" />
-                  Sumar al Ticket Ahora
-                </button>
-              </div>
-
-              {/* Mandatory JSON Format Display */}
-              {showJsonView && (
-                <div className="mt-2 pt-2 border-t border-slate-800/80">
-                  <div className="text-[10px] text-slate-400 font-mono mb-1">
-                    OBJETO JSON EXACTO PRODUCIDO:
-                  </div>
-                  <pre className="bg-black/80 text-emerald-400 p-3 rounded-xl font-mono text-[11px] overflow-x-auto border border-emerald-900/50">
-                    {JSON.stringify({
-                      items: parsedResult.items,
-                      total: parsedResult.total
-                    }, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
-
         </div>
 
-        {/* Footer */}
-        <div className="bg-slate-50 border-t border-slate-200 px-5 py-3 flex items-center justify-between shrink-0 text-xs text-slate-600">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Ticket actual: <strong>{currentTicketCount} partidas</strong></span>
-          </div>
-
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleResetSession}
+            className="p-1 text-slate-300 hover:text-amber-300 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            title="Reiniciar sesión acumulativa de voz"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowHelpGuide(!showHelpGuide)}
+            className="p-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            title="Palabras clave y ayuda"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsMinimized(true)}
+            className="p-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            title="Minimizar (dejar solo botón flotante abajo)"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 bg-white hover:bg-slate-100 text-slate-700 font-bold rounded-xl border border-slate-300 transition-colors cursor-pointer"
+            className="p-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            title="Cerrar asistente"
           >
-            Listo / Volver al Mostrador
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Body (Super Compacto y Despejado) */}
+      <div className="p-2.5 space-y-2 overflow-y-auto max-h-[calc(82vh-55px)] text-xs">
+
+        {/* Indicador de Estado y Onda Sonora */}
+        <div className={`p-2 rounded-xl border transition-all ${
+          isListening 
+            ? 'bg-red-50/90 border-red-300 shadow-2xs' 
+            : isProcessing
+              ? 'bg-amber-50/90 border-amber-300'
+              : 'bg-slate-50 border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between gap-1.5">
+            
+            <div className="flex items-center gap-2">
+              {isListening ? (
+                <>
+                  <div className="relative flex items-center justify-center">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping absolute"></span>
+                    <span className="w-2 rounded-full bg-red-600 relative h-2"></span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-black text-red-700 block leading-none">
+                      MICRO CONTINUO ACTIVO
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-medium">
+                      Di "MÁS" para sumar, "cuenta" o "cerrar"
+                    </span>
+                  </div>
+                </>
+              ) : isProcessing ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-spin"></span>
+                  <span className="text-[11px] font-black text-amber-800">
+                    Procesando voz...
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                  <span className="text-[11px] font-bold text-slate-600">
+                    Micrófono pausado
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* Visualizer Sound Wave */}
+            <div className="flex items-end gap-1 h-5 px-1.5 py-0.5 bg-slate-950 rounded-md">
+              {isListening ? (
+                <>
+                  <span className="w-1 bg-red-400 rounded-full animate-voice-wave-1"></span>
+                  <span className="w-1 bg-amber-400 rounded-full animate-voice-wave-2"></span>
+                  <span className="w-1 bg-emerald-400 rounded-full animate-voice-wave-3"></span>
+                  <span className="w-1 bg-yellow-400 rounded-full animate-voice-wave-4"></span>
+                  <span className="w-1 bg-rose-400 rounded-full animate-voice-wave-5"></span>
+                </>
+              ) : (
+                <>
+                  <span className="w-1 bg-slate-700 rounded-full h-1"></span>
+                  <span className="w-1 bg-slate-700 rounded-full h-1.5"></span>
+                  <span className="w-1 bg-slate-700 rounded-full h-1"></span>
+                </>
+              )}
+            </div>
+
+            {/* Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-2xs ${
+                isListening
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
+            >
+              {isListening ? (
+                <>
+                  <MicOff className="w-3 h-3" />
+                  <span>Pausar</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-3 h-3" />
+                  <span>Encender</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Feedback de lo que se escuchó */}
+          <div className="mt-1.5 bg-white rounded-lg p-1.5 border border-slate-200 min-h-[30px] flex items-center justify-between">
+            {activeSessionText || interimText ? (
+              <div className="text-[11px] leading-tight flex-1">
+                <span className="font-bold text-slate-800">{activeSessionText}</span>
+                {interimText && (
+                  <span className="text-amber-600 italic font-medium ml-1 animate-pulse">
+                    {interimText}...
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span className="text-[10px] text-slate-400 italic">
+                {isListening ? 'Ej: "2 de 5 más 3 de 10 más un queso", luego "cuenta"...' : 'Micrófono apagado'}
+              </span>
+            )}
+
+            {isProcessing && (
+              <span className="text-[9px] bg-amber-100 text-amber-800 px-1 py-0.2 rounded font-bold shrink-0 ml-1">
+                Sumando
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Total Acumulado de la Sesión en Vivo */}
+        <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl p-2 flex items-center justify-between shadow-xs">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider block text-amber-100 leading-none">
+              Total Acumulado Sesión:
+            </span>
+            <span className="text-[10px] text-amber-100/90 font-medium">
+              {sessionItemsAccumulated.length} partidas en memoria
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono font-black text-xl leading-none text-white drop-shadow-xs">
+              ${sessionTotalAccumulated.toFixed(2)}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (sessionTotalAccumulated > 0 && onTriggerCheckout) {
+                  playCashSound();
+                  onTriggerCheckout(sessionTotalAccumulated);
+                  setSuccessToast(`¡Cuenta enviada! Total: $${sessionTotalAccumulated.toFixed(2)}`);
+                  setTimeout(() => setSuccessToast(''), 3000);
+                }
+              }}
+              className="bg-white/20 hover:bg-white/30 text-white font-black text-[10px] px-2 py-1 rounded-lg transition-colors cursor-pointer"
+              title="Enviar cuenta directamente al mostrador"
+            >
+              Cuenta ➔
+            </button>
+          </div>
+        </div>
+
+        {/* Guía de Palabras Clave */}
+        {showHelpGuide && (
+          <div className="bg-amber-50/95 border border-amber-300 rounded-xl p-2 space-y-1 text-[11px] text-amber-950 animate-in fade-in">
+            <div className="font-black flex items-center gap-1 text-amber-900">
+              <Radio className="w-3.5 h-3.5 text-amber-600" />
+              <span>Palabras Clave Admitidas:</span>
+            </div>
+            <ul className="list-disc pl-4 space-y-0.5 text-[10px]">
+              <li><strong>"2 de 5", "3 de 10", "5 de 3"</strong>: Suma piezas de pan.</li>
+              <li><strong>"MÁS"</strong>: Suma a la venta acumulativa actual (ej. <em>"más 2 de 10 más un queso"</em>).</li>
+              <li><strong>"CUENTA"</strong>: Envía el total final acumulado al POS.</li>
+              <li><strong>"CERRAR" / "TERMINAR"</strong>: Palabra de cierre que apaga el micrófono.</li>
+              <li>El micrófono <strong>no se apaga</strong> al terminar de hablar, se mantiene escuchando continuamente.</li>
+            </ul>
+          </div>
+        )}
+
+        {/* Alertas y Notificaciones */}
+        {errorMessage && (
+          <div className="bg-red-50 border border-red-300 text-red-700 px-2 py-1 rounded-lg text-[10px] leading-tight">
+            {errorMessage}
+          </div>
+        )}
+
+        {successToast && (
+          <div className="bg-emerald-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold text-center animate-in zoom-in-95 shadow-sm">
+            {successToast}
+          </div>
+        )}
+
+        {/* Último Resultado Sumado */}
+        {parsedResult && parsedResult.items.length > 0 && (
+          <div className="bg-slate-900 text-white rounded-xl p-2 space-y-1 border border-slate-800">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-[11px]">
+              <span className="font-bold text-amber-300 flex items-center gap-1">
+                <ShoppingBag className="w-3 h-3" />
+                Items en sesión:
+              </span>
+              <span className="font-mono font-black text-emerald-400">
+                Total: ${parsedResult.total.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="space-y-0.5 max-h-20 overflow-y-auto">
+              {parsedResult.items.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-slate-800/80 px-1.5 py-0.5 rounded text-[10px]">
+                  <span className="text-white">
+                    <strong className="text-amber-400">{item.cantidad}x</strong> {item.concepto}
+                  </span>
+                  <span className="font-mono font-bold text-amber-300">
+                    ${item.subtotal.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between pt-0.5">
+              <button
+                type="button"
+                onClick={() => setShowJsonView(!showJsonView)}
+                className="text-[9px] text-slate-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+              >
+                <Code2 className="w-2.5 h-2.5" />
+                {showJsonView ? 'Ocultar JSON' : 'Ver JSON'}
+              </button>
+
+              {!autoAddToTicket && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const toAdd = parsedResult.newItems || parsedResult.items;
+                    onAddItemsToTicket(toAdd);
+                    playCashSound();
+                    setSuccessToast(`+${toAdd.length} sumados al ticket`);
+                    setTimeout(() => setSuccessToast(''), 3000);
+                  }}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  Sumar al ticket
+                </button>
+              )}
+            </div>
+
+            {showJsonView && (
+              <pre className="mt-1 bg-black text-emerald-400 p-1.5 rounded font-mono text-[9px] overflow-x-auto max-h-24 border border-slate-800">
+                {JSON.stringify({
+                  items: parsedResult.items,
+                  total: parsedResult.total
+                }, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+
+        {/* Historial de Frases Dictadas en esta sesión */}
+        {recentTranscripts.length > 0 && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 space-y-1">
+            <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold">
+              <span>Historial de dictados:</span>
+              <button
+                type="button"
+                onClick={() => setRecentTranscripts([])}
+                className="text-slate-400 hover:text-red-600 p-0.5"
+                title="Limpiar historial"
+              >
+                <Trash2 className="w-2.5 h-2.5" />
+              </button>
+            </div>
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {recentTranscripts.map((entry, i) => (
+                <div key={i} className="flex items-center justify-between text-[10px] bg-white p-1 rounded border border-slate-100">
+                  <span className="truncate max-w-[170px] text-slate-800">"{entry.text}"</span>
+                  <span className="font-mono font-bold text-emerald-600">${entry.total.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Botones de Prueba Rápida con 1 Clic */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[9px] font-bold text-slate-500">
+            <span className="flex items-center gap-1">
+              <Sparkles className="w-2.5 h-2.5 text-amber-600" />
+              Prueba con 1 clic:
+            </span>
+            <span>Toca para simular</span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {examplePhrases.map((phrase, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  setActiveSessionText(phrase);
+                  processDictation(phrase, true);
+                }}
+                className="text-[9px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-950 font-semibold px-1.5 py-0.5 rounded border border-slate-200 transition-colors cursor-pointer active:scale-95"
+              >
+                "{phrase}"
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Entrada manual por teclado */}
+        <div className="flex gap-1">
+          <input
+            type="text"
+            value={manualInput}
+            onChange={(e) => setManualInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && manualInput.trim()) {
+                setActiveSessionText(manualInput);
+                processDictation(manualInput);
+                setManualInput('');
+              }
+            }}
+            placeholder="O escribe: 2 de 5 más 3 de 10..."
+            className="flex-1 bg-white border border-slate-300 focus:border-amber-500 rounded-lg px-2 py-0.5 text-[11px] text-slate-900 outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              if (manualInput.trim()) {
+                setActiveSessionText(manualInput);
+                processDictation(manualInput);
+                setManualInput('');
+              }
+            }}
+            className="bg-slate-900 hover:bg-amber-600 text-white font-bold px-2 py-0.5 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer"
+          >
+            <Send className="w-2.5 h-2.5" />
           </button>
         </div>
 
+        {/* Checkbox auto-sumar */}
+        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px] text-slate-600">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoAddToTicket}
+              onChange={(e) => setAutoAddToTicket(e.target.checked)}
+              className="w-3 h-3 text-amber-600 rounded focus:ring-amber-500"
+            />
+            <span className="font-bold flex items-center gap-1 text-slate-700 text-[10px]">
+              <Zap className="w-2.5 h-2.5 text-amber-600" />
+              Sumar de inmediato al ticket
+            </span>
+          </label>
+
+          <span className="text-[9px] text-slate-400 font-mono">
+            {currentTicketCount} en ticket
+          </span>
+        </div>
+
       </div>
+
     </div>
   );
 };

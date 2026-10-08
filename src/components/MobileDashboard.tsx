@@ -103,6 +103,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   const [ticketToView, setTicketToView] = useState<SaleTicket | null>(null);
   const [showShiftCutModal, setShowShiftCutModal] = useState<boolean>(false);
   const [showVoiceAssistantModal, setShowVoiceAssistantModal] = useState<boolean>(false);
+  const [isMobileVoiceListening, setIsMobileVoiceListening] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<string>('');
 
   const handleAddVoiceItems = (voiceItems: VoiceCommandItem[]) => {
@@ -399,26 +400,47 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           {/* ASISTENTE DE VOZ PUNTO ZÁKIA */}
           <button
             type="button"
-            onClick={() => setShowVoiceAssistantModal(true)}
-            className="w-full bg-gradient-to-r from-slate-900 via-amber-950 to-orange-950 text-white p-3 rounded-2xl shadow-md border border-amber-500/30 flex items-center justify-between transition-all active:scale-98 cursor-pointer group"
+            onClick={() => setShowVoiceAssistantModal(prev => !prev)}
+            className={`w-full p-3 rounded-2xl shadow-md border transition-all active:scale-98 cursor-pointer group flex items-center justify-between ${
+              isMobileVoiceListening
+                ? 'bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white border-red-300 ring-2 ring-red-400 animate-pulse'
+                : 'bg-gradient-to-r from-slate-900 via-amber-950 to-orange-950 text-white border-amber-500/30'
+            }`}
           >
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950 flex items-center justify-center font-black shadow-sm group-hover:scale-105 transition-transform shrink-0">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black shadow-sm shrink-0 transition-transform ${
+                isMobileVoiceListening
+                  ? 'bg-white text-red-600'
+                  : 'bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950 group-hover:scale-105'
+              }`}>
                 <Mic className="w-5 h-5 animate-pulse" />
               </div>
               <div className="text-left">
-                <div className="text-xs font-black text-amber-300 flex items-center gap-1.5">
-                  <span>Dictar con Voz</span>
-                  <span className="text-[9px] bg-amber-400/20 text-amber-200 px-1.5 py-0.2 rounded-full border border-amber-400/30">Punto Zákia</span>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className={isMobileVoiceListening ? 'text-white' : 'text-amber-300'}>
+                    {isMobileVoiceListening ? '¡Escuchando ahora!' : 'Dictar con Voz'}
+                  </span>
+                  <span className="text-[9px] bg-black/20 text-amber-200 px-1.5 py-0.2 rounded-full border border-white/20">Punto Zákia</span>
                 </div>
-                <div className="text-[10px] text-slate-300 font-medium">
-                  Di "2 de 5", "3 de 10", "una lechita", etc.
+                <div className="text-[10px] text-slate-200 font-medium">
+                  {isMobileVoiceListening ? 'Habla ahora: "2 de 5, 3 de 10 y un queso"' : 'Di "2 de 5", "3 de 10", "una lechita", etc.'}
                 </div>
               </div>
             </div>
-            <div className="bg-white/10 group-hover:bg-white/20 text-amber-200 px-2.5 py-1 rounded-xl text-[11px] font-bold border border-white/10 shrink-0">
-              Hablar 🎙️
-            </div>
+
+            {/* Sound Wave Equalizer on Mobile Button */}
+            {isMobileVoiceListening ? (
+              <div className="flex items-end gap-1 h-5 px-2 py-0.5 bg-black/30 rounded-xl">
+                <span className="w-1 bg-white rounded-full animate-voice-wave-1"></span>
+                <span className="w-1 bg-white rounded-full animate-voice-wave-2"></span>
+                <span className="w-1 bg-white rounded-full animate-voice-wave-3"></span>
+                <span className="w-1 bg-white rounded-full animate-voice-wave-4"></span>
+              </div>
+            ) : (
+              <div className="bg-white/10 group-hover:bg-white/20 text-amber-200 px-2.5 py-1 rounded-xl text-[11px] font-bold border border-white/10 shrink-0">
+                Hablar 🎙️
+              </div>
+            )}
           </button>
 
           {/* STEP 1: MULTIPLIER BAR (1, 2, 3, 4, 5, 6, 8, 10...) */}
@@ -839,9 +861,13 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
       {/* Voice Assistant Modal for Mobile */}
       <VoiceAssistantModal
         isOpen={showVoiceAssistantModal}
-        onClose={() => setShowVoiceAssistantModal(false)}
+        onClose={() => {
+          setShowVoiceAssistantModal(false);
+          setIsMobileVoiceListening(false);
+        }}
         onAddItemsToTicket={handleAddVoiceItems}
         currentTicketCount={ticketItems.length}
+        onListeningStateChange={setIsMobileVoiceListening}
       />
 
     </div>
