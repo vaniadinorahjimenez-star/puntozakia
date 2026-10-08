@@ -21,6 +21,7 @@ import {
   parseVoiceCommandLocally, 
   parseVoiceCommandWithAI, 
   resetVoiceSession,
+  removeVoiceSessionItem,
   createSpeechRecognitionInstance, 
   isSpeechRecognitionSupported, 
   VoiceCommandResult, 
@@ -32,6 +33,7 @@ interface VoiceAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAddItemsToTicket: (items: VoiceCommandItem[]) => void;
+  onRemoveItemFromTicket?: (concepto: string, precio_unitario: number, quantity: number) => void;
   currentTicketCount?: number;
   onListeningStateChange?: (isListening: boolean) => void;
   onTriggerCheckout?: (total: number) => void;
@@ -41,6 +43,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   isOpen,
   onClose,
   onAddItemsToTicket,
+  onRemoveItemFromTicket,
   currentTicketCount = 0,
   onListeningStateChange,
   onTriggerCheckout
@@ -105,6 +108,43 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     sessionIdRef.current = `session_${Date.now()}`;
     setSuccessToast('Sesión de voz reiniciada');
     setTimeout(() => setSuccessToast(''), 2500);
+  };
+
+  // Delete a specific row/item from voice session WITHOUT stopping microphone
+  const handleRemoveSessionRow = async (indexToRemove: number) => {
+    const targetItem = sessionItemsAccumulated[indexToRemove];
+    if (!targetItem) return;
+
+    playBeep(420, 'sawtooth', 0.05);
+
+    // 1. Remove from local session state immediately so UI updates instantly
+    const updatedItems = sessionItemsAccumulated.filter((_, idx) => idx !== indexToRemove);
+    const newTotal = updatedItems.reduce((acc, it) => acc + (it.subtotal || 0), 0);
+    setSessionItemsAccumulated(updatedItems);
+    setSessionTotalAccumulated(newTotal);
+
+    if (parsedResult) {
+      setParsedResult({
+        ...parsedResult,
+        items: updatedItems,
+        total: newTotal
+      });
+    }
+
+    // 2. If ticket was synced, remove corresponding item quantity from the actual ticket
+    if (onRemoveItemFromTicket) {
+      onRemoveItemFromTicket(targetItem.concepto, targetItem.precio_unitario, targetItem.cantidad);
+    }
+
+    setSuccessToast(`Eliminado: ${targetItem.concepto}`);
+    setTimeout(() => setSuccessToast(''), 2000);
+
+    // 3. Sync deletion to server session state in background without interrupting microphone
+    try {
+      await removeVoiceSessionItem(sessionIdRef.current, indexToRemove, targetItem.concepto, targetItem.precio_unitario);
+    } catch (err) {
+      console.warn('Could not sync removal to server session:', err);
+    }
   };
 
   // Process text and generate JSON + optionally add to ticket
@@ -330,11 +370,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Render MINIMIZED FLOATING PILL (Docked at bottom right)
+  // Render MINIMIZED FLOATING PILL (Docked at bottom left)
   if (isMinimized) {
     return (
       <div 
-        className="fixed bottom-2 right-2 sm:bottom-3 sm:right-3 z-50 bg-slate-900/95 backdrop-blur-md text-white px-2.5 py-1.5 rounded-2xl shadow-2xl border-2 border-amber-500 flex items-center gap-2 animate-in slide-in-from-bottom-2 duration-200"
+        className="fixed bottom-2 left-2 sm:bottom-3 sm:left-3 z-50 bg-slate-900/95 backdrop-blur-md text-white px-2.5 py-1.5 rounded-2xl shadow-2xl border-2 border-amber-500 flex items-center gap-2 animate-in slide-in-from-bottom-2 duration-200"
       >
         <button
           type="button"
@@ -382,10 +422,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     );
   }
 
-  // Render COMPACT FLOATING DOCK (Ubicado hasta abajo a la derecha donde NO estorba ticket ni catálogo)
+  // Render COMPACT FLOATING DOCK (Ubicado en el lado izquierdo hasta abajo, a un lado de la previsualización del pedido sin taparla)
   return (
     <div 
-      className="fixed bottom-2 right-2 sm:bottom-3 sm:right-3 z-50 w-[320px] sm:w-[350px] max-w-[calc(100vw-1rem)] bg-white/98 backdrop-blur-md rounded-2xl shadow-2xl border-2 border-amber-500 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-bottom-2 duration-200"
+      className="fixed bottom-2 left-2 sm:bottom-3 sm:left-3 z-50 w-[310px] sm:w-[340px] max-w-[calc(100vw-1rem)] bg-white/98 backdrop-blur-md rounded-2xl shadow-2xl border-2 border-amber-500 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-left-2 duration-200"
       style={{ boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.45), 0 0 16px rgba(245, 158, 11, 0.35)' }}
     >
       
@@ -624,28 +664,50 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </div>
         )}
 
-        {/* Último Resultado Sumado */}
-        {parsedResult && parsedResult.items.length > 0 && (
-          <div className="bg-slate-900 text-white rounded-xl p-2 space-y-1 border border-slate-800">
+        {/* Lista de Partidas Acumuladas en la Sesión de Voz con opción de Borrar Fila sin apagar micro */}
+        {sessionItemsAccumulated.length > 0 && (
+          <div className="bg-slate-900 text-white rounded-xl p-2 space-y-1 border border-slate-800 shadow-inner">
             <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-[11px]">
               <span className="font-bold text-amber-300 flex items-center gap-1">
-                <ShoppingBag className="w-3 h-3" />
-                Items en sesión:
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>Partidas ({sessionItemsAccumulated.length}):</span>
               </span>
               <span className="font-mono font-black text-emerald-400">
-                Total: ${parsedResult.total.toFixed(2)}
+                ${sessionTotalAccumulated.toFixed(2)}
               </span>
             </div>
 
-            <div className="space-y-0.5 max-h-20 overflow-y-auto">
-              {parsedResult.items.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between bg-slate-800/80 px-1.5 py-0.5 rounded text-[10px]">
-                  <span className="text-white">
-                    <strong className="text-amber-400">{item.cantidad}x</strong> {item.concepto}
-                  </span>
-                  <span className="font-mono font-bold text-amber-300">
-                    ${item.subtotal.toFixed(2)}
-                  </span>
+            <div className="space-y-1 max-h-32 overflow-y-auto pr-0.5">
+              {sessionItemsAccumulated.map((item, idx) => (
+                <div 
+                  key={idx} 
+                  className="flex items-center justify-between bg-slate-800/90 hover:bg-slate-800 px-2 py-1 rounded-lg text-[10px] group border border-slate-700/60 transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="bg-amber-400 text-slate-950 font-black px-1.5 py-0.2 rounded font-mono text-[9px] shrink-0">
+                      {item.cantidad}×
+                    </span>
+                    <span className="text-white font-medium truncate">
+                      {item.concepto}
+                    </span>
+                    <span className="text-slate-400 font-mono text-[9px] shrink-0">
+                      (@${item.precio_unitario})
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                    <span className="font-mono font-bold text-amber-300 text-[11px]">
+                      ${item.subtotal.toFixed(2)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSessionRow(idx)}
+                      className="text-slate-400 hover:text-rose-400 hover:bg-rose-950/60 p-1 rounded transition-colors cursor-pointer"
+                      title="Borrar esta fila de voz (sin detener el micrófono)"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-400" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -660,29 +722,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                 {showJsonView ? 'Ocultar JSON' : 'Ver JSON'}
               </button>
 
-              {!autoAddToTicket && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const toAdd = parsedResult.newItems || parsedResult.items;
-                    onAddItemsToTicket(toAdd);
-                    playCashSound();
-                    setSuccessToast(`+${toAdd.length} sumados al ticket`);
-                    setTimeout(() => setSuccessToast(''), 3000);
-                  }}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  Sumar al ticket
-                </button>
-              )}
+              <span className="text-[9px] text-slate-400 italic">
+                Toca <Trash2 className="w-2.5 h-2.5 inline text-rose-400" /> para borrar error sin parar micro
+              </span>
             </div>
 
             {showJsonView && (
               <pre className="mt-1 bg-black text-emerald-400 p-1.5 rounded font-mono text-[9px] overflow-x-auto max-h-24 border border-slate-800">
                 {JSON.stringify({
-                  items: parsedResult.items,
-                  total: parsedResult.total
+                  items: sessionItemsAccumulated,
+                  total: sessionTotalAccumulated
                 }, null, 2)}
               </pre>
             )}
