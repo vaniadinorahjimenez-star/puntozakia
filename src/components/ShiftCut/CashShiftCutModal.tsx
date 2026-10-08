@@ -37,7 +37,8 @@ import {
   loadOutflows, 
   saveOutflows, 
   generateShiftCutWhatsAppMessage,
-  resolveTicketShift 
+  resolveTicketShift,
+  formatLocalDate 
 } from '../../utils/storage';
 import { playBeep, playCashSound, playCelebrationFanfare } from '../../utils/audio';
 import { ThermalShiftCutTicket } from './ThermalShiftCutTicket';
@@ -91,11 +92,14 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
   // Shift Name (Prioridad: lee el turno activo en mostrador, o detecta por horario: antes de 15:00 = Turno 1, >= 15:00 = Turno 2)
   const [shiftType, setShiftType] = useState<string>(() => {
     const active = localStorage.getItem('santafe_active_shift');
-    if (active === 'turno1') return 'Turno 1 (Mañana 07:00 a 15:00)';
-    if (active === 'turno2') return 'Turno 2 (Tarde 15:00 a 22:00)';
+    if (active === 'turno1') return 'Turno 1 (Mañana 00:01 a 15:00)';
+    if (active === 'turno2') return 'Turno 2 (Tarde / Noche 15:01 a 23:59)';
     const hour = new Date().getHours();
-    return hour < 15 ? 'Turno 1 (Mañana 07:00 a 15:00)' : 'Turno 2 (Tarde 15:00 a 22:00)';
+    return hour < 15 ? 'Turno 1 (Mañana 00:01 a 15:00)' : 'Turno 2 (Tarde / Noche 15:01 a 23:59)';
   });
+
+  // Fecha seleccionada para el corte (por defecto hoy, permite cortar días previos o tras medianoche)
+  const [selectedCutDate, setSelectedCutDate] = useState<string>(todayStr);
 
   // Initial Drawer Cash (Fondo inicial de caja) - Default 1000 editable con persistencia
   const [initialCash, setInitialCash] = useState<number>(() => {
@@ -220,10 +224,24 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
     }
   }, [cashierName]);
 
-  // Filter tickets for today (all tickets for day)
+  // Helper para resolver la fecha del ticket sin desfase UTC
+  const getTicketDate = (t: SaleTicket): string => {
+    if (t.date && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date.trim())) {
+      return t.date.trim();
+    }
+    if (t.timestamp) {
+      try {
+        const d = new Date(t.timestamp);
+        if (!isNaN(d.getTime())) return formatLocalDate(d);
+      } catch {}
+    }
+    return todayStr;
+  };
+
+  // Filter tickets for the target cut date (00:01 a 23:59)
   const allTodayTickets = useMemo(() => {
-    return tickets.filter(t => t.date === todayStr);
-  }, [tickets, todayStr]);
+    return tickets.filter(t => getTicketDate(t) === selectedCutDate);
+  }, [tickets, selectedCutDate]);
 
   // Counts of tickets per shift for today
   const turno1TicketsCount = useMemo(() => {
@@ -567,11 +585,25 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                     </span>
                   </label>
 
+                  {/* Selector de Fecha del Corte */}
+                  <div className="mb-2 bg-amber-50 p-2 rounded-xl border border-amber-200 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-black text-amber-950 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-[#D95D39]" />
+                      <span>Fecha del Corte:</span>
+                    </span>
+                    <input
+                      type="date"
+                      value={selectedCutDate}
+                      onChange={(e) => setSelectedCutDate(e.target.value)}
+                      className="bg-white px-2 py-1 rounded-lg text-xs font-black text-slate-900 border border-amber-300 focus:outline-none"
+                    />
+                  </div>
+
                   {/* Switch rápido de turnos con conteo de tickets */}
                   <div className="grid grid-cols-3 gap-1.5 mb-2">
                     <button
                       type="button"
-                      onClick={() => setShiftType('Turno 1 (Mañana 07:00 a 15:00)')}
+                      onClick={() => setShiftType('Turno 1 (Mañana 00:01 a 15:00)')}
                       className={`p-2 rounded-xl text-left transition-all cursor-pointer border-2 flex flex-col justify-between ${
                         shiftType.includes('Turno 1')
                           ? 'bg-amber-500 text-amber-950 border-amber-600 shadow-xs ring-2 ring-amber-400/50'
@@ -582,6 +614,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                         <span>🌅</span>
                         <span>Turno 1</span>
                       </div>
+                      <div className="text-[9px] font-extrabold opacity-90">00:01 a 15:00</div>
                       <div className="text-[10px] font-bold opacity-80 mt-0.5">
                         {turno1TicketsCount} tickets
                       </div>
@@ -589,7 +622,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setShiftType('Turno 2 (Tarde 15:00 a 22:00)')}
+                      onClick={() => setShiftType('Turno 2 (Tarde / Noche 15:01 a 23:59)')}
                       className={`p-2 rounded-xl text-left transition-all cursor-pointer border-2 flex flex-col justify-between ${
                         shiftType.includes('Turno 2')
                           ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs ring-2 ring-indigo-400/50'
@@ -597,9 +630,10 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                       }`}
                     >
                       <div className="font-black text-xs flex items-center gap-1">
-                        <span>🌇</span>
+                        <span>🌆</span>
                         <span>Turno 2</span>
                       </div>
+                      <div className="text-[9px] font-extrabold opacity-90">15:01 a 23:59</div>
                       <div className="text-[10px] font-bold opacity-80 mt-0.5">
                         {turno2TicketsCount} tickets
                       </div>
@@ -618,6 +652,7 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                         <span>🗓️</span>
                         <span>Todo el Día</span>
                       </div>
+                      <div className="text-[9px] font-extrabold opacity-90">00:01 a 23:59</div>
                       <div className="text-[10px] font-bold opacity-80 mt-0.5">
                         {allTodayTickets.length} tickets
                       </div>
@@ -629,9 +664,9 @@ export const CashShiftCutModal: React.FC<CashShiftCutModalProps> = ({
                     onChange={(e) => setShiftType(e.target.value)}
                     className="w-full bg-white px-3 py-1.5 rounded-xl font-bold text-xs text-slate-900 border border-amber-300 focus:outline-none focus:ring-2 focus:ring-[#D95D39] shadow-2xs cursor-pointer"
                   >
-                    <option value="Turno 1 (Mañana 07:00 a 15:00)">🌅 Turno 1 (Mañana 07:00 a 15:00)</option>
-                    <option value="Turno 2 (Tarde 15:00 a 22:00)">🌇 Turno 2 (Tarde 15:00 a 22:00)</option>
-                    <option value="Turno Completo">🗓️ Turno Completo (Día)</option>
+                    <option value="Turno 1 (Mañana 00:01 a 15:00)">🌅 Turno 1 (Mañana 00:01 a 15:00)</option>
+                    <option value="Turno 2 (Tarde / Noche 15:01 a 23:59)">🌇 Turno 2 (Tarde / Noche 15:01 a 23:59 - 11:59 PM)</option>
+                    <option value="Turno Completo">🗓️ Turno Completo (Día 00:01 a 23:59 hrs)</option>
                   </select>
                 </div>
               </div>

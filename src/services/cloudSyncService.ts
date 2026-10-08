@@ -153,15 +153,18 @@ export async function syncWithCloud(providedData?: {
       timestamp: new Date().toISOString()
     };
 
-    const endpoints = ['/.netlify/functions/sync-data', '/api/sync'];
+    const endpoints = ['/api/sync', '/.netlify/functions/sync-data'];
     let lastError: any = null;
 
     for (const endpoint of endpoints) {
       try {
-        const res = await fetch(endpoint, {
+        const queryUrl = `${endpoint}${endpoint.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+        const res = await fetch(queryUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
           },
           body: JSON.stringify(payload)
         });
@@ -173,16 +176,18 @@ export async function syncWithCloud(providedData?: {
 
         const json = await res.json();
         if (json.success && json.data) {
-          // CRÍTICO: Recargar los datos locales MÁS RECIENTES para no perder
-          // ventas que hayan ocurrido mientras la petición HTTP estaba en vuelo (diferencia de segundos)
+          // Filtrar tickets y pedidos mockeados si vinieran del servidor
+          const rawIncomingTickets = (json.data.tickets || []).filter((t: any) => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
+          const rawIncomingOrders = (json.data.orders || []).filter((o: any) => o && !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id) && o.assignedDriverId !== 'osvaldo' && o.assignedDriverId !== 'simon' && o.deliveryType !== 'domicilio');
+
           const freshLocalTickets = loadTickets();
           const freshLocalOrders = loadOrders();
           const freshLocalShiftCuts = loadShiftCuts();
           const freshLocalOutflows = loadOutflows();
           const freshLocalCustomers = loadCustomers();
 
-          const mergedTickets = mergeTickets(freshLocalTickets, json.data.tickets || []);
-          const mergedOrders = mergeOrders(freshLocalOrders, json.data.orders || []);
+          const mergedTickets = mergeTickets(freshLocalTickets, rawIncomingTickets);
+          const mergedOrders = mergeOrders(freshLocalOrders, rawIncomingOrders);
           const mergedShiftCuts = mergeShiftCuts(freshLocalShiftCuts, json.data.shiftCuts || []);
           const mergedOutflows = mergeOutflows(freshLocalOutflows, json.data.outflows || []);
           const mergedCustomers = mergeCustomers(freshLocalCustomers, json.data.customers || []);
@@ -202,11 +207,7 @@ export async function syncWithCloud(providedData?: {
             customers: mergedCustomers
           };
 
-          // Notificar solo si hay cambios reales para evitar ciclos infinitos
-          const ticketsChanged = !areTicketsIdentical(freshLocalTickets, mergedTickets);
-          if (ticketsChanged || mergedOrders.length !== freshLocalOrders.length) {
-            notifyListeners(resultData);
-          }
+          notifyListeners(resultData);
 
           return {
             success: true,
@@ -242,15 +243,18 @@ export async function syncWithCloud(providedData?: {
  * Consulta la nube y combina los datos recibidos con los locales
  */
 export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
-  const endpoints = ['/.netlify/functions/sync-data', '/api/sync'];
+  const endpoints = ['/api/sync', '/.netlify/functions/sync-data'];
   let lastError: any = null;
 
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(endpoint, {
+      const queryUrl = `${endpoint}${endpoint.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+      const res = await fetch(queryUrl, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
         }
       });
 
@@ -258,14 +262,18 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
 
       const json = await res.json();
       if (json.success && json.data) {
+        // Filtrar tickets y pedidos mockeados para asegurar 100% datos reales
+        const rawIncomingTickets = (json.data.tickets || []).filter((t: any) => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
+        const rawIncomingOrders = (json.data.orders || []).filter((o: any) => o && !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id) && o.assignedDriverId !== 'osvaldo' && o.assignedDriverId !== 'simon' && o.deliveryType !== 'domicilio');
+
         const localTickets = loadTickets();
         const localOrders = loadOrders();
         const localShiftCuts = loadShiftCuts();
         const localOutflows = loadOutflows();
         const localCustomers = loadCustomers();
 
-        const mergedTickets = mergeTickets(localTickets, json.data.tickets || []);
-        const mergedOrders = mergeOrders(localOrders, json.data.orders || []);
+        const mergedTickets = mergeTickets(localTickets, rawIncomingTickets);
+        const mergedOrders = mergeOrders(localOrders, rawIncomingOrders);
         const mergedShiftCuts = mergeShiftCuts(localShiftCuts, json.data.shiftCuts || []);
         const mergedOutflows = mergeOutflows(localOutflows, json.data.outflows || []);
         const mergedCustomers = mergeCustomers(localCustomers, json.data.customers || []);
@@ -284,10 +292,7 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
           customers: mergedCustomers
         };
 
-        const ticketsChanged = !areTicketsIdentical(localTickets, mergedTickets);
-        if (ticketsChanged || mergedOrders.length !== localOrders.length) {
-          notifyListeners(resultData);
-        }
+        notifyListeners(resultData);
 
         return {
           success: true,

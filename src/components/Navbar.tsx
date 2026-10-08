@@ -14,11 +14,12 @@ import {
   ChevronDown,
   Menu,
   X,
-  TrendingUp
+  TrendingUp,
+  Smartphone
 } from 'lucide-react';
 import { Settings as SettingsType } from '../types';
 
-export type ActiveTabType = 'pos' | 'orders' | 'bakers' | 'analytics' | 'delivery' | 'loyalty' | 'history' | 'admin';
+export type ActiveTabType = 'pos' | 'mobile' | 'orders' | 'bakers' | 'analytics' | 'delivery' | 'loyalty' | 'history' | 'admin';
 
 interface NavbarProps {
   activeTab: ActiveTabType;
@@ -66,6 +67,14 @@ export const Navbar: React.FC<NavbarProps> = ({
       description: 'Cobro rápido y teclado de números'
     },
     {
+      id: 'mobile' as ActiveTabType,
+      label: 'Vista Móvil (Celular)',
+      shortLabel: 'Celular',
+      icon: Smartphone,
+      emoji: '📱',
+      description: 'Punto de venta y caja optimizado para teléfono'
+    },
+    {
       id: 'orders' as ActiveTabType,
       label: 'Encargos / Pedidos',
       shortLabel: 'Encargos',
@@ -98,15 +107,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       icon: Gift,
       emoji: '⭐',
       description: 'Puntos y descuentos clientes'
-    },
-    {
-      id: 'delivery' as ActiveTabType,
-      label: 'Repartidores',
-      shortLabel: 'Repartidores',
-      icon: Truck,
-      emoji: '🛵',
-      badge: pendingDeliveriesCount > 0 ? pendingDeliveriesCount : undefined,
-      description: 'Osvaldo y Simón'
     },
     {
       id: 'history' as ActiveTabType,
@@ -164,23 +164,22 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right: Desplegable Menu Button, Clock & Quick Controls */}
         <div className="flex items-center space-x-2 sm:space-x-3">
           
-          {/* Main Desplegable Menu Button (Menú Desplegable Oculto) */}
+          {/* Main Desplegable Menu Button (Solo en el desplegable están Mostrador e Historial) */}
           <div className="relative">
             <button
               id="view-dropdown-toggle-btn"
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="flex items-center space-x-2 bg-[#D95D39] hover:bg-[#c44e2c] text-white px-3 sm:px-4 py-1.5 rounded-xl font-black text-xs sm:text-sm shadow-sm transition-all active:scale-95 cursor-pointer ring-2 ring-[#D95D39]/20"
-              title="Abrir menú de vistas y módulos"
+              className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white px-3.5 sm:px-4 py-1.5 rounded-xl font-semibold text-xs sm:text-sm shadow-xs transition-all active:scale-95 cursor-pointer border border-slate-700/50"
+              title="Abrir menú de módulos de la panadería"
             >
-              <Menu className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
-              <span className="text-base select-none">{currentItem.emoji}</span>
+              <Menu className="w-4 h-4 text-amber-400" />
               <span className="font-bold tracking-tight">
-                {currentItem.shortLabel}
+                Módulos
               </span>
-              <ChevronDown className={`w-3.5 h-3.5 sm:w-4 sm:h-4 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />
 
               {totalPendingNotifications > 0 && (
-                <span className="bg-white text-[#D95D39] text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-xs">
+                <span className="bg-[#D95D39] text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow-xs">
                   {totalPendingNotifications}
                 </span>
               )}

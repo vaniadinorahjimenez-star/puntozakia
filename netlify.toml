@@ -7,6 +7,16 @@
   node_bundler = "esbuild"
 
 [[redirects]]
+  from = "/api/sync"
+  to = "/.netlify/functions/sync-data"
+  status = 200
+
+[[redirects]]
+  from = "/api/pagar"
+  to = "/.netlify/functions/pagar"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200

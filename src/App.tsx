@@ -49,6 +49,7 @@ import { LoyaltyManager } from './components/Loyalty/LoyaltyManager';
 import { SalesHistory } from './components/SalesHistory/SalesHistory';
 import { ProductionAnalytics } from './components/Analytics/ProductionAnalytics';
 import { AdminSettings } from './components/AdminSettings/AdminSettings';
+import { MobileDashboard } from './components/MobileDashboard';
 import { 
   syncWithCloud, 
   fetchAndMergeCloud, 
@@ -67,8 +68,13 @@ export default function App() {
   const [drivers, setDrivers] = useState<Driver[]>(loadDrivers);
   const [driverCustomers, setDriverCustomers] = useState<DriverCustomer[]>(loadDriverCustomers);
 
-  // Active Navigation Tab
-  const [activeTab, setActiveTab] = useState<ActiveTabType>('pos');
+  // Active Navigation Tab (Detects mobile screen < 640px to default to mobile view)
+  const [activeTab, setActiveTab] = useState<ActiveTabType>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 640) {
+      return 'mobile';
+    }
+    return 'pos';
+  });
 
   // Accessibility Zoom Level (-1, 0, 1, 2)
   const [zoomLevel, setZoomLevel] = useState<number>(0);
@@ -102,39 +108,40 @@ export default function App() {
     saveDriverCustomers(driverCustomers);
   }, [driverCustomers]);
 
-  // Cloud Synchronization: Combina en lugar de sobreescribir entre Computadora y Teléfono
+  // Cloud Synchronization: Combina en tiempo real entre Computadora y Teléfono
   useEffect(() => {
-    // 1. Descargar y combinar datos existentes en la nube al abrir la app
-    fetchAndMergeCloud();
+    const pullAndApplyCloud = async () => {
+      try {
+        const res = await fetchAndMergeCloud();
+        if (res.success && res.mergedData) {
+          if (res.mergedData.tickets) {
+            setTickets(prev => mergeTickets(prev, res.mergedData!.tickets));
+          }
+          if (res.mergedData.orders) {
+            setOrders(prev => mergeOrders(prev, res.mergedData!.orders));
+          }
+          if (res.mergedData.customers) {
+            setCustomers(prev => mergeCustomers(prev, res.mergedData!.customers));
+          }
+        }
+      } catch (err) {
+        console.warn('Auto-sync pull error:', err);
+      }
+    };
 
-    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado sin sobrescribir ventas recientes
+    // 1. Descargar y combinar datos existentes en la nube al abrir la app
+    pullAndApplyCloud();
+
+    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado
     const unsubscribe = onCloudSyncUpdated((merged) => {
-      if (merged.tickets && merged.tickets.length > 0) {
-        setTickets(prev => {
-          const combined = mergeTickets(prev, merged.tickets);
-          if (combined.length === prev.length && combined.every((t, i) => t.id === prev[i]?.id)) {
-            return prev;
-          }
-          return combined;
-        });
+      if (merged.tickets) {
+        setTickets(prev => mergeTickets(prev, merged.tickets));
       }
-      if (merged.orders && merged.orders.length > 0) {
-        setOrders(prev => {
-          const combined = mergeOrders(prev, merged.orders);
-          if (combined.length === prev.length && combined.every((o, i) => o.id === prev[i]?.id)) {
-            return prev;
-          }
-          return combined;
-        });
+      if (merged.orders) {
+        setOrders(prev => mergeOrders(prev, merged.orders));
       }
-      if (merged.customers && merged.customers.length > 0) {
-        setCustomers(prev => {
-          const combined = mergeCustomers(prev, merged.customers);
-          if (combined.length === prev.length && combined.every((c, i) => c.id === prev[i]?.id)) {
-            return prev;
-          }
-          return combined;
-        });
+      if (merged.customers) {
+        setCustomers(prev => mergeCustomers(prev, merged.customers));
       }
     });
 
@@ -152,13 +159,13 @@ export default function App() {
 
     // 4. Chequeo periódico en segundo plano en TIEMPO REAL (cada 3.5 segundos)
     const syncInterval = setInterval(() => {
-      fetchAndMergeCloud();
+      pullAndApplyCloud();
     }, 3500);
 
     // 5. Al regresar a la pestaña o prender la pantalla del celular, actualizar de inmediato
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
-        fetchAndMergeCloud();
+        pullAndApplyCloud();
       }
     };
     window.addEventListener('focus', handleVisibilityOrFocus);
@@ -342,6 +349,23 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-3">
+        {activeTab === 'mobile' && (
+          <MobileDashboard
+            products={products}
+            settings={settings}
+            customers={customers}
+            driverCustomers={driverCustomers}
+            tickets={tickets}
+            orders={orders}
+            onSaveTicket={handleSaveTicket}
+            onUpdateTicket={handleUpdateTicket}
+            onRegisterCustomer={handleRegisterCustomer}
+            onSaveOrder={handleSaveOrder}
+            onUpdateOrder={handleUpdateOrder}
+            onSelectTab={setActiveTab}
+          />
+        )}
+
         {activeTab === 'pos' && (
           <PosCounter
             products={products}

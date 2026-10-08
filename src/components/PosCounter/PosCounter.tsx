@@ -36,8 +36,11 @@ import {
   Tag,
   Boxes,
   Calculator,
-  ShoppingBag
+  ShoppingBag,
+  Mic
 } from 'lucide-react';
+import { VoiceAssistantModal } from '../VoiceAssistant/VoiceAssistantModal';
+import { VoiceCommandItem } from '../../utils/voiceAssistant';
 import { BreadProduct, TicketItem, SaleTicket, Customer, Settings, ZettleDeviceInfo, BakeryOrder, DriverCustomer } from '../../types';
 import { playBeep, playCashSound } from '../../utils/audio';
 import { 
@@ -106,6 +109,20 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Shift cut modal state
   const [showShiftCutModal, setShowShiftCutModal] = useState<boolean>(false);
+
+  // Asistente de Voz Punto Zákia modal state
+  const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
+
+  // Keyboard shortcut listener ('v' o 'V' para abrir dictado por voz si no está en un input)
+  useEffect(() => {
+    const handleVoiceKey = (e: KeyboardEvent) => {
+      if ((e.key === 'v' || e.key === 'V') && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+        setShowVoiceModal(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleVoiceKey);
+    return () => window.removeEventListener('keydown', handleVoiceKey);
+  }, []);
 
   // Manual Shift Switch (Turno 1 / Turno 2) - Defaults to active shift or by time (< 15:00 = turno1)
   const [activeShift, setActiveShift] = useState<'turno1' | 'turno2'>(() => {
@@ -536,6 +553,38 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     // Reset multiplier to 1 for next pick
     setSelectedMultiplier(1);
     setCustomMultiplierInput('');
+  };
+
+  // Add items interpreted by Voice Assistant Punto Zákia
+  const handleAddVoiceItems = (voiceItems: VoiceCommandItem[]) => {
+    if (!voiceItems || voiceItems.length === 0) return;
+    playCashSound();
+
+    setTicketItems(prev => {
+      let updated = [...prev];
+      for (const vItem of voiceItems) {
+        // Find existing match by price and name
+        const existingIdx = updated.findIndex(it => it.price === vItem.precio_unitario && it.name === vItem.concepto);
+        if (existingIdx >= 0) {
+          const cur = updated[existingIdx];
+          const newQty = cur.quantity + vItem.cantidad;
+          updated[existingIdx] = {
+            ...cur,
+            quantity: newQty,
+            total: newQty * cur.price
+          };
+        } else {
+          updated.push({
+            id: `voice-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            name: vItem.concepto,
+            price: vItem.precio_unitario,
+            quantity: vItem.cantidad,
+            total: vItem.subtotal
+          });
+        }
+      }
+      return updated;
+    });
   };
 
   const handleCustomMultiplierKeypad = (key: string) => {
@@ -1350,8 +1399,25 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               </span>
             </div>
 
-            {/* Switch Buttons y Multiplicador */}
-            <div className="flex items-center gap-2">
+            {/* Switch Buttons, Asistente de Voz y Multiplicador */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* Botón Asistente de Voz Punto Zákia */}
+              <button
+                id="voice-assistant-modal-btn"
+                type="button"
+                onClick={() => {
+                  playBeep(700, 'sine', 0.04);
+                  setShowVoiceModal(true);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-orange-600 via-amber-600 to-orange-500 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg font-black text-[11px] shadow-xs hover:shadow-md transition-all active:scale-95 cursor-pointer ring-1 ring-amber-300 shrink-0"
+                title="Dictar productos con tu voz (Atajo tecla 'V')"
+              >
+                <Mic className="w-3.5 h-3.5 animate-pulse text-amber-200" />
+                <span className="hidden sm:inline">Dictar por Voz</span>
+                <span className="sm:hidden">Voz</span>
+                <span className="text-[9px] bg-black/20 text-amber-100 px-1 py-0.2 rounded font-mono font-bold">Zákia</span>
+              </button>
+
               <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-lg border border-slate-200 shadow-2xs">
                 <button
                   id="shift-switch-turno1-btn"
@@ -4064,6 +4130,14 @@ export const PosCounter: React.FC<PosCounterProps> = ({
           </div>
         </div>
       )}
+
+      {/* Asistente de Voz Punto Zákia Modal */}
+      <VoiceAssistantModal
+        isOpen={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+        onAddItemsToTicket={handleAddVoiceItems}
+        currentTicketCount={ticketItems.length}
+      />
     </div>
   );
 };

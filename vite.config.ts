@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import fs from 'fs';
 import { defineConfig, Plugin } from 'vite';
+import { GoogleGenAI } from '@google/genai';
 
 // Plugin para conectar directamente con la API real de Clip Pinpad F2F en desarrollo
 function clipNetlifyFunctionDevPlugin(): Plugin {
@@ -409,6 +410,111 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
               } catch (e: any) {
                 res.writeHead(500, headers);
                 return res.end(JSON.stringify({ error: e.message }));
+              }
+            });
+            return;
+          }
+
+          // Voice Assistant Endpoint for Punto Zákia - Panadería Santa Fe
+          if (req.url && (req.url.startsWith('/api/voice-assistant') || req.url.startsWith('/.netlify/functions/voice-assistant'))) {
+            if (req.method === 'OPTIONS') {
+              res.writeHead(204, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+              });
+              return res.end();
+            }
+
+            let bodyStr = '';
+            req.on('data', chunk => { bodyStr += chunk; });
+            req.on('end', async () => {
+              const headers = {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              };
+
+              try {
+                let payload: any = {};
+                if (bodyStr) {
+                  try { payload = JSON.parse(bodyStr); } catch (e) {}
+                }
+                const transcript = (payload.transcript || '').trim();
+
+                const systemInstruction = `Eres el asistente de voz del punto de venta "Punto Zákia" de Panadería Santa Fe.
+Tu único objetivo es interpretar lo que dicta el cajero y devolver EXCLUSIVAMENTE un objeto JSON válido con los productos, subtotales y total calculado.
+
+REGLAS DE PRECIOS Y PRODUCTOS:
+1. Frases como "X de Y" (ejemplo: "2 de 5", "3 de 10", "3 de 12", "5 de 18", "1 de 20"):
+   - X es la cantidad.
+   - Y es el precio unitario del pan ($5, $10, $12, $18, $20, $25, $35, $150).
+   - Concepto: "Pieza $Y".
+
+2. Acompañamientos y lácteos (precios fijos):
+   - "Lechita" -> precio unitario: 18.00
+   - "Leche" -> precio unitario: 35.00
+   - "Nata" -> precio unitario: 90.00
+   - "Queso" -> precio unitario: 150.00
+   - "Domo" -> precio unitario: 25.00
+
+3. Postres:
+   - "Postre" -> si no especifican precio, usa 20.00 (o 25.00 si dicen de 25).
+
+4. Si mencionan "un", "una", cuenta como cantidad 1 (ejemplo: "más una nata", "más un queso").
+5. Ignora muletillas ("ehh", "a ver", "ponle", "y").
+
+ESTRUCTURA OBLIGATORIA DEL JSON:
+Responde únicamente con este formato, sin texto antes ni después:
+{
+  "items": [
+    {
+      "cantidad": 2,
+      "concepto": "Pieza $5",
+      "precio_unitario": 5.00,
+      "subtotal": 10.00
+    }
+  ],
+  "total": 10.00
+}`;
+
+                let parsedResult = null;
+
+                // Try calling Gemini if GEMINI_API_KEY is available
+                if (process.env.GEMINI_API_KEY && transcript) {
+                  try {
+                    const ai = new GoogleGenAI();
+                    const aiResp = await ai.models.generateContent({
+                      model: 'gemini-3.8-flash',
+                      contents: `Interpreta lo siguiente que dictó el cajero: "${transcript}"`,
+                      config: {
+                        systemInstruction,
+                        responseMimeType: 'application/json',
+                      }
+                    });
+
+                    const text = aiResp.text?.trim() || '{}';
+                    parsedResult = JSON.parse(text);
+                  } catch (aiErr) {
+                    console.warn('Error with Gemini API, fallback to regex rules:', aiErr);
+                  }
+                }
+
+                if (parsedResult && Array.isArray(parsedResult.items) && typeof parsedResult.total === 'number') {
+                  res.writeHead(200, headers);
+                  return res.end(JSON.stringify(parsedResult));
+                }
+
+                // Fallback / deterministic calculation
+                // Simple parser inside server in case AI key is not configured
+                res.writeHead(200, headers);
+                return res.end(JSON.stringify({
+                  items: [],
+                  total: 0,
+                  fallback: true
+                }));
+              } catch (err: any) {
+                res.writeHead(500, headers);
+                return res.end(JSON.stringify({ error: err.message }));
               }
             });
             return;

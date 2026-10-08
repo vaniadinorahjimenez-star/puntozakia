@@ -16,7 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bakeryName: 'Panaderia Santa Fé Zakia',
   slogan: 'Pan calientito y tradicional.',
   phone: '442 816 3291',
-  address: '7:00 am a 10:00 pm',
+  address: 'Paseo de Zakia, Querétaro • 07:00 a 23:59 hrs',
   ticketFooter: '¡Gracias por su preferencia! Vuelva pronto.',
   loyaltyPointsPerPesos: 20, // $20 pesos = 1 punto
   loyaltyValuePerPoint: 1, // 1 punto = $1 peso
@@ -214,13 +214,74 @@ export const DEFAULT_DRIVER_CUSTOMERS: DriverCustomer[] = [
   { id: 'dc_pk_4', name: 'Deliz', driverId: 'tienda', customerType: 'recoger_tienda', phone: '442 334 7788', address: 'Pide y Recoge en mostrador sucursal', defaultPayment: 'credito', notes: 'Café & Deliz - Pide y Recoge con pedido programado' },
 ];
 
-// Helper to get today's date formatted as YYYY-MM-DD
-export function getTodayString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
+// Helper to get today's date formatted as YYYY-MM-DD (hora local sin desfase UTC)
+export function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+export function getTodayString(): string {
+  return formatLocalDate(new Date());
+}
+
+/**
+ * Calcula la semana calendario de LUNES a DOMINGO
+ * Lunes 00:00:00 a Domingo 23:59:59
+ */
+export function getCalendarWeekRange(refDate: Date = new Date()): {
+  startStr: string;
+  endStr: string;
+  monday: Date;
+  sunday: Date;
+  label: string;
+} {
+  const d = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+  const day = d.getDay(); // 0 es Domingo, 1 es Lunes, ..., 6 es Sábado
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const startStr = formatLocalDate(monday);
+  const endStr = formatLocalDate(sunday);
+
+  const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const label = `Lun ${monday.getDate()} ${months[monday.getMonth()]} - Dom ${sunday.getDate()} ${months[sunday.getMonth()]}`;
+
+  return { startStr, endStr, monday, sunday, label };
+}
+
+/**
+ * Calcula el mes calendario (Día 1 al último día del mes)
+ */
+export function getCalendarMonthRange(refDate: Date = new Date()): {
+  startStr: string;
+  endStr: string;
+  firstDay: Date;
+  lastDay: Date;
+  label: string;
+  year: number;
+  monthIndex: number;
+} {
+  const y = refDate.getFullYear();
+  const m = refDate.getMonth();
+  const firstDay = new Date(y, m, 1);
+  const lastDay = new Date(y, m + 1, 0);
+
+  const startStr = formatLocalDate(firstDay);
+  const endStr = formatLocalDate(lastDay);
+
+  const fullMonths = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+  ];
+  const label = `${fullMonths[m]} ${y} (1 al ${lastDay.getDate()})`;
+
+  return { startStr, endStr, firstDay, lastDay, label, year: y, monthIndex: m };
 }
 
 export function getNowTimeString(includeSeconds = true): string {
@@ -250,17 +311,12 @@ export function parseTimeToMinutes(timeStr: string): number {
 }
 
 // Determina el turno por horario estándar:
-// Turno 1: 06:50 AM (410 mins) a 15:00 HRS (900 mins)
-// Turno 2: 15:01 HRS (901 mins) a 22:10 HRS (1330 mins)
+// Turno 1 (Matutino): 00:01 AM a 15:00 HRS (900 mins)
+// Turno 2 (Vespertino / Noche): 15:01 HRS a 23:59 HRS / 11:59 PM (1439 mins)
+// Cubre el día completo de 00:01 a 23:59 sin dejar ningún ticket ni corte fuera a las 10:00 PM (22:00)
 export function getTicketShiftByTime(timeStr: string): 'turno1' | 'turno2' {
   const mins = parseTimeToMinutes(timeStr);
-  if (mins >= 410 && mins <= 900) {
-    return 'turno1';
-  }
-  if (mins > 900 && mins <= 1330) {
-    return 'turno2';
-  }
-  if (mins < 410) {
+  if (mins <= 900) {
     return 'turno1';
   }
   return 'turno2';
@@ -282,238 +338,11 @@ export const INITIAL_CUSTOMERS: Customer[] = [
   { id: 'c5', name: 'Lucía Mendoza (Cafetería)', phone: '5555667788', points: 120, totalSpent: 2400, visitsCount: 20, lastVisit: getTodayString() },
 ];
 
-export const INITIAL_ORDERS: BakeryOrder[] = [
-  {
-    id: 'ord-101',
-    folio: 'PED-0101',
-    customerName: 'Doña Carmen Ramírez',
-    customerPhone: '5511223344',
-    deliveryType: 'domicilio',
-    address: 'Calle Las Rosas #45, Col. Lindavista (Casa portón blanco)',
-    deliveryDate: getTodayString(),
-    deliveryTime: '16:00',
-    items: [
-      { breadId: 'p10', name: 'Concha Vainilla', category: 'Pan Dulce Tradicional', quantity: 20, unitPrice: 10, total: 200, done: true },
-      { breadId: 'p18', name: 'Cuerno de Mantequilla', category: 'Pan Dulce Tradicional', quantity: 15, unitPrice: 18, total: 270, done: true },
-      { breadId: 'p8', name: 'Bolillo Tradicional', category: 'Bolillo y Telera', quantity: 30, unitPrice: 8, total: 240, done: false },
-    ],
-    total: 710,
-    deposit: 300,
-    pendingAmount: 410,
-    paymentStatus: 'anticipo',
-    assignedDriverId: 'osvaldo',
-    deliveryStatus: 'pendiente',
-    notes: 'Empacar los bolillos en bolsa de papel separada por favor.',
-    createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-    coordinates: { lat: 19.4892, lng: -99.1245 },
-    isMonthlyCredit: false,
-    requiresInvoice: false,
-    invoiceStatus: 'no_requerida'
-  },
-  {
-    id: 'ord-102',
-    folio: 'PED-0102',
-    customerName: 'Restaurante Los Portales (Sr. Roberto)',
-    customerPhone: '5522334455',
-    deliveryType: 'domicilio',
-    address: 'Av. Juárez #210, Zona Centro (Entregar por cocina)',
-    deliveryDate: getTodayString(),
-    deliveryTime: '17:30',
-    items: [
-      { breadId: 'p8', name: 'Telera para Torta', category: 'Bolillo y Telera', quantity: 80, unitPrice: 8, total: 640, done: true },
-      { breadId: 'p35', name: 'Baguette Rústica', category: 'Bolillo y Telera', quantity: 10, unitPrice: 35, total: 350, done: false },
-    ],
-    total: 990,
-    deposit: 0,
-    pendingAmount: 990,
-    paymentStatus: 'pendiente',
-    assignedDriverId: 'simon',
-    deliveryStatus: 'pendiente',
-    notes: 'Paga a fin de mes. Enviar factura con remisiones.',
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-    coordinates: { lat: 19.4342, lng: -99.1415 },
-    isMonthlyCredit: true,
-    requiresInvoice: true,
-    invoiceStatus: 'facturado',
-    invoiceFolio: 'FAC-2024-089',
-    rfc: 'RLP880412XYZ',
-    businessName: 'Restaurante Los Portales S.A. de C.V.',
-    cfdiUse: 'G03 - Gastos en general'
-  },
-  {
-    id: 'ord-103',
-    folio: 'PED-0103',
-    customerName: 'Cafetería La Esquina / Lucía Mendoza',
-    customerPhone: '5555667788',
-    deliveryType: 'tienda',
-    address: 'Mostrador / Tienda',
-    deliveryDate: getTodayString(),
-    deliveryTime: '08:30',
-    items: [
-      { breadId: 'p10', name: 'Concha Chocolate', category: 'Pan Dulce Tradicional', quantity: 30, unitPrice: 10, total: 300, done: true },
-      { breadId: 'p18', name: 'Cuerno de Mantequilla', category: 'Pan Dulce Tradicional', quantity: 20, unitPrice: 18, total: 360, done: true },
-    ],
-    total: 660,
-    deposit: 0,
-    pendingAmount: 660,
-    paymentStatus: 'pendiente',
-    assignedDriverId: 'ninguno',
-    deliveryStatus: 'entregado',
-    notes: 'Cliente con convenio de pago a fin de mes. Pasa por el pan en la mañana.',
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    isMonthlyCredit: true,
-    requiresInvoice: true,
-    invoiceStatus: 'pendiente',
-    rfc: 'MEL920315ABC',
-    businessName: 'Lucía Elena Mendoza Cafeterías',
-    cfdiUse: 'G03 - Gastos en general'
-  },
-  {
-    id: 'ord-104',
-    folio: 'PED-0104',
-    customerName: 'Profra. Patricia Solís',
-    customerPhone: '5566778899',
-    deliveryType: 'tienda',
-    address: 'Recoge en Tienda / Mostrador',
-    deliveryDate: getTodayString(),
-    deliveryTime: '19:00',
-    items: [
-      { breadId: 'p90', name: 'Rosca de Reyes Mediana Tradicional', category: 'Roscas y Especiales', quantity: 1, unitPrice: 90, total: 90, done: true },
-      { breadId: 'p12', name: 'Donas de Chocolate y Canela', category: 'Pan Dulce Tradicional', quantity: 10, unitPrice: 12, total: 120, done: true },
-    ],
-    total: 210,
-    deposit: 0,
-    pendingAmount: 210,
-    paymentStatus: 'pendiente',
-    assignedDriverId: 'ninguno',
-    deliveryStatus: 'pendiente',
-    notes: 'Recoge a las 7:00 PM después del trabajo.',
-    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-    isMonthlyCredit: false,
-    requiresInvoice: false,
-    invoiceStatus: 'no_requerida'
-  },
-  {
-    id: 'ord-105',
-    folio: 'PED-0105',
-    customerName: 'Hospital Santa María (Cafetería)',
-    customerPhone: '5577889900',
-    deliveryType: 'domicilio',
-    address: 'Calzada México Tacuba #890',
-    deliveryDate: getTodayString(),
-    deliveryTime: '15:00',
-    items: [
-      { breadId: 'p10', name: 'Conchas Surtidas', category: 'Pan Dulce Tradicional', quantity: 40, unitPrice: 10, total: 400, done: true },
-      { breadId: 'p25', name: 'Panqués de Nuez', category: 'Panqués y Galletas', quantity: 10, unitPrice: 25, total: 250, done: true },
-    ],
-    total: 650,
-    deposit: 0,
-    pendingAmount: 650,
-    paymentStatus: 'pendiente',
-    assignedDriverId: 'simon',
-    deliveryStatus: 'entregado',
-    collectedAmount: 0,
-    deliveredAt: new Date(Date.now() - 3600000).toISOString(),
-    notes: 'Entregado a recepcionista Lucero. Corte mensual a pagar el día 30.',
-    createdAt: new Date(Date.now() - 3600000 * 6).toISOString(),
-    coordinates: { lat: 19.4520, lng: -99.1820 },
-    isMonthlyCredit: true,
-    requiresInvoice: true,
-    invoiceStatus: 'pendiente',
-    rfc: 'HSM700819KJ1',
-    businessName: 'Hospital Santa María Servicios Médicos S.A.',
-    cfdiUse: 'G03 - Gastos en general'
-  }
-];
+// En Sucursal Zakia únicamente existe Mostrador / Tienda. No hay pedidos ficticios de reparto.
+export const INITIAL_ORDERS: BakeryOrder[] = [];
 
-export const INITIAL_TICKETS: SaleTicket[] = [
-  {
-    id: 't-1001',
-    folio: 'T-001001',
-    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-    date: getTodayString(),
-    time: '08:30',
-    items: [
-      { id: 'i1', name: 'Pan Dulce $10', price: 10, quantity: 5, total: 50 },
-      { id: 'i2', name: 'Bolillo $8', price: 8, quantity: 10, total: 80 },
-    ],
-    subtotal: 130,
-    discount: 0,
-    total: 130,
-    paymentMethod: 'efectivo',
-    amountPaid: 150,
-    change: 20,
-    customerName: 'Doña Carmen Ramírez',
-    customerPhone: '5511223344',
-    pointsEarned: 6,
-    pointsRedeemed: 0,
-    cashier: 'Mostrador 1'
-  },
-  {
-    id: 't-1002',
-    folio: 'T-001002',
-    timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
-    date: getTodayString(),
-    time: '09:45',
-    items: [
-      { id: 'i3', name: 'Pastel 3 Leches $150', price: 150, quantity: 1, total: 150 },
-      { id: 'i4', name: 'Cuerno $18', price: 18, quantity: 4, total: 72 },
-    ],
-    subtotal: 222,
-    discount: 10,
-    total: 212,
-    paymentMethod: 'tarjeta',
-    amountPaid: 212,
-    change: 0,
-    customerName: 'Sr. Roberto Vargas',
-    customerPhone: '5522334455',
-    pointsEarned: 10,
-    pointsRedeemed: 10,
-    cashier: 'Mostrador 1'
-  },
-  {
-    id: 't-1003',
-    folio: 'T-001003',
-    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-    date: getTodayString(),
-    time: '11:15',
-    items: [
-      { id: 'i5', name: 'Pan Dulce $12', price: 12, quantity: 6, total: 72 },
-      { id: 'i6', name: 'Orejas $20', price: 20, quantity: 3, total: 60 },
-    ],
-    subtotal: 132,
-    discount: 0,
-    total: 132,
-    paymentMethod: 'efectivo',
-    amountPaid: 200,
-    change: 68,
-    pointsEarned: 6,
-    pointsRedeemed: 0,
-    cashier: 'Mostrador 1'
-  },
-  {
-    id: 't-1004',
-    folio: 'T-001004',
-    timestamp: new Date(Date.now() - 3600000 * 1).toISOString(),
-    date: getTodayString(),
-    time: '12:40',
-    items: [
-      { id: 'i7', name: 'Rosca Mediana $90', price: 90, quantity: 1, total: 90 },
-      { id: 'i8', name: 'Panqué Nuez $25', price: 25, quantity: 2, total: 50 },
-    ],
-    subtotal: 140,
-    discount: 0,
-    total: 140,
-    paymentMethod: 'tarjeta',
-    amountPaid: 140,
-    change: 0,
-    customerName: 'Dra. María Elena Garza',
-    customerPhone: '5533445566',
-    pointsEarned: 7,
-    pointsRedeemed: 0,
-    cashier: 'Mostrador 1'
-  }
-];
+// En Sucursal Zakia no usamos tickets ficticios; únicamente ventas reales cobradas.
+export const INITIAL_TICKETS: SaleTicket[] = [];
 
 // Storage keys
 export const STORAGE_KEYS = {
@@ -839,7 +668,9 @@ export function loadTickets(): SaleTicket[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         // Garantizar que cada ticket cargado tenga un ID único y un folio no vacío
-        return parsed.map((t, idx) => {
+        // Filtrar tickets de muestra antiguos (t-1001 a t-1004) para solo mostrar ventas 100% reales
+        const valid = parsed.filter(t => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
+        return valid.map((t, idx) => {
           if (!t) return t;
           const id = t.id && String(t.id).trim() !== '' 
             ? String(t.id).trim() 
@@ -909,7 +740,19 @@ export function saveCustomers(customers: Customer[], forceOverwrite: boolean = f
 export function loadOrders(): BakeryOrder[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // En Zakia solo hay Mostrador / pedidos de tienda. Filtrar pedidos demo de reparto.
+        return parsed.filter(o => 
+          o && 
+          !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id) &&
+          o.assignedDriverId !== 'osvaldo' && 
+          o.assignedDriverId !== 'simon' &&
+          o.deliveryType !== 'domicilio'
+        );
+      }
+    }
   } catch (e) {
     console.error('Error loading orders', e);
   }
