@@ -15,7 +15,9 @@ import {
   Trash2,
   Radio,
   CheckCircle,
-  RotateCcw
+  RotateCcw,
+  GripHorizontal,
+  Pin
 } from 'lucide-react';
 import { 
   parseVoiceCommandLocally, 
@@ -356,6 +358,77 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   }, [isOpen]);
 
+  // Draggable position state (null means default position adjacent to ticket)
+  const [customPosition, setCustomPosition] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ isDragging: boolean; startX: number; startY: number; initialLeft: number; initialTop: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    dragRef.current = {
+      isDragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialLeft: rect.left,
+      initialTop: rect.top,
+    };
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
+    if (!containerRef.current || e.touches.length === 0) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const touch = e.touches[0];
+    dragRef.current = {
+      isDragging: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      initialLeft: rect.left,
+      initialTop: rect.top,
+    };
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current?.isDragging) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      const newX = Math.max(8, Math.min(window.innerWidth - 320, dragRef.current.initialLeft + dx));
+      const newY = Math.max(8, Math.min(window.innerHeight - 120, dragRef.current.initialTop + dy));
+      setCustomPosition({ x: newX, y: newY });
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!dragRef.current?.isDragging || e.touches.length === 0) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - dragRef.current.startX;
+      const dy = touch.clientY - dragRef.current.startY;
+      const newX = Math.max(8, Math.min(window.innerWidth - 320, dragRef.current.initialLeft + dx));
+      const newY = Math.max(8, Math.min(window.innerHeight - 120, dragRef.current.initialTop + dy));
+      setCustomPosition({ x: newX, y: newY });
+    };
+
+    const handleEndDrag = () => {
+      if (dragRef.current) {
+        dragRef.current.isDragging = false;
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleEndDrag);
+    window.addEventListener('touchmove', handleTouchMove);
+    window.addEventListener('touchend', handleEndDrag);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleEndDrag);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleEndDrag);
+    };
+  }, []);
+
   // Keyboard shortcut listener when widget is open
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -370,17 +443,26 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Render MINIMIZED FLOATING PILL (Docked at bottom left)
+  // Render MINIMIZED FLOATING PILL (Docked beside ticket on desktop or bottom-left on mobile)
   if (isMinimized) {
     return (
       <div 
-        className="fixed bottom-2 left-2 sm:bottom-3 sm:left-3 z-50 bg-slate-900/95 backdrop-blur-md text-white px-2.5 py-1.5 rounded-2xl shadow-2xl border-2 border-amber-500 flex items-center gap-2 animate-in slide-in-from-bottom-2 duration-200"
+        ref={containerRef}
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        className={`z-50 bg-slate-900/95 backdrop-blur-md text-white px-2.5 py-1.5 rounded-2xl shadow-2xl border-2 border-emerald-500 flex items-center gap-2 animate-in slide-in-from-top-2 duration-200 cursor-move select-none ${
+          customPosition
+            ? 'fixed'
+            : 'fixed bottom-2 left-2 sm:bottom-3 sm:left-3 lg:bottom-auto lg:left-auto lg:top-20 lg:right-[calc(41.66%+1rem)]'
+        }`}
+        style={customPosition ? { left: `${customPosition.x}px`, top: `${customPosition.y}px`, right: 'auto', bottom: 'auto' } : undefined}
       >
+        <GripHorizontal className="w-3 h-3 text-slate-500 shrink-0" />
         <button
           type="button"
           onClick={toggleListening}
           className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-slate-700 text-slate-300'
+            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-emerald-700 text-white'
           }`}
           title={isListening ? 'Micrófono encendido continuo' : 'Encender micrófono'}
         >
@@ -388,8 +470,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         </button>
 
         <div className="flex flex-col">
-          <span className="text-[11px] font-black text-amber-300 leading-tight">
-            Voz Activa (Acumulativa)
+          <span className="text-[11px] font-black text-emerald-300 leading-tight">
+            Voz (Junto al Pedido)
           </span>
           <span className="text-[9px] text-slate-400 leading-none">
             {isListening ? 'Escuchando continuo...' : 'Pausado'}
@@ -406,7 +488,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           type="button"
           onClick={() => setIsMinimized(false)}
           className="p-1 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white transition-colors cursor-pointer ml-1"
-          title="Ver panel completo"
+          title="Ver recuadro completo"
         >
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
@@ -422,37 +504,61 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     );
   }
 
-  // Render COMPACT FLOATING DOCK (Ubicado en el lado izquierdo hasta abajo, a un lado de la previsualización del pedido sin taparla)
+  // Render COMPACT FLOATING DOCK (Ubicado exactamente en el recuadro verde a un lado de la previsualización del pedido sin taparla)
   return (
     <div 
-      className="fixed bottom-2 left-2 sm:bottom-3 sm:left-3 z-50 w-[310px] sm:w-[340px] max-w-[calc(100vw-1rem)] bg-white/98 backdrop-blur-md rounded-2xl shadow-2xl border-2 border-amber-500 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-left-2 duration-200"
-      style={{ boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.45), 0 0 16px rgba(245, 158, 11, 0.35)' }}
+      ref={containerRef}
+      className={`z-50 w-[315px] sm:w-[345px] max-w-[calc(100vw-1rem)] bg-white/98 backdrop-blur-md rounded-2xl shadow-2xl border-2 border-emerald-500 ring-2 ring-emerald-500/20 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-top-2 duration-200 ${
+        customPosition
+          ? 'fixed'
+          : 'fixed bottom-2 left-2 sm:bottom-3 sm:left-3 lg:bottom-auto lg:left-auto lg:top-20 lg:right-[calc(41.66%+1rem)] xl:right-[calc(41.66%+1.5rem)]'
+      }`}
+      style={{
+        boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.45), 0 0 16px rgba(16, 185, 129, 0.35)',
+        ...(customPosition ? { left: `${customPosition.x}px`, top: `${customPosition.y}px`, right: 'auto', bottom: 'auto' } : {})
+      }}
     >
       
-      {/* Header Compacto */}
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 text-white px-3 py-2 flex items-center justify-between shrink-0 border-b border-amber-900/40">
+      {/* Header Compacto del Recuadro Verde (Permite arrastrar con cursor-move) */}
+      <div 
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 text-white px-3 py-2 flex items-center justify-between shrink-0 border-b border-emerald-800/50 cursor-move select-none"
+        title="Arrastra para mover el recuadro libremente por la pantalla"
+      >
         <div className="flex items-center gap-2">
+          <GripHorizontal className="w-3.5 h-3.5 text-emerald-400/70 shrink-0" />
           <div className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all shadow-inner ${
-            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-slate-700 text-slate-300'
+            isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' : 'bg-emerald-700 text-white'
           }`}>
             <Mic className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center gap-1.5 leading-none">
-              <h4 className="font-black text-xs text-amber-200">
+              <h4 className="font-black text-xs text-emerald-200">
                 Voz Punto Zákia
               </h4>
-              <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-black uppercase px-1 py-0.2 rounded border border-emerald-500/30">
-                Acumulativo
+              <span className="bg-emerald-500/25 text-emerald-300 text-[8px] font-black uppercase px-1 py-0.2 rounded border border-emerald-400/40">
+                Recuadro de Voz
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5 leading-none">
-              {isListening ? 'Micrófono continuo prendido' : 'Micrófono pausado'}
+            <p className="text-[10px] text-slate-300 font-medium mt-0.5 leading-none">
+              {isListening ? 'Micrófono continuo activo' : 'Micrófono pausado'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1">
+          {customPosition && (
+            <button
+              type="button"
+              onClick={() => setCustomPosition(null)}
+              className="p-1 text-emerald-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+              title="Restablecer posición (Reanclar al lado del pedido)"
+            >
+              <Pin className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={handleResetSession}
@@ -473,7 +579,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             type="button"
             onClick={() => setIsMinimized(true)}
             className="p-1 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
-            title="Minimizar (dejar solo botón flotante abajo)"
+            title="Minimizar (dejar solo botón flotante)"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>

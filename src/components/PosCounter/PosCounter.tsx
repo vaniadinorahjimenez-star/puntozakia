@@ -114,15 +114,25 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
   const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
 
-  // Keyboard shortcut listener ('v' o 'V' para abrir dictado por voz si no está en un input)
+  // Keyboard shortcut listener ('v' o 'V') y evento global desde Navbar para activar asistente de voz
   useEffect(() => {
     const handleVoiceKey = (e: KeyboardEvent) => {
       if ((e.key === 'v' || e.key === 'V') && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         setShowVoiceModal(prev => !prev);
       }
     };
+
+    const handleNavbarVoiceToggle = () => {
+      playBeep(700, 'sine', 0.04);
+      setShowVoiceModal(prev => !prev);
+    };
+
     window.addEventListener('keydown', handleVoiceKey);
-    return () => window.removeEventListener('keydown', handleVoiceKey);
+    window.addEventListener('toggle-voice-assistant', handleNavbarVoiceToggle);
+    return () => {
+      window.removeEventListener('keydown', handleVoiceKey);
+      window.removeEventListener('toggle-voice-assistant', handleNavbarVoiceToggle);
+    };
   }, []);
 
   // Manual Shift Switch (Turno 1 / Turno 2) - Defaults to active shift or by time (< 15:00 = turno1)
@@ -4221,7 +4231,10 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         onAddItemsToTicket={handleAddVoiceItems}
         onRemoveItemFromTicket={handleRemoveVoiceItemFromTicket}
         currentTicketCount={ticketItems.length}
-        onListeningStateChange={setIsVoiceListening}
+        onListeningStateChange={(listening) => {
+          setIsVoiceListening(listening);
+          window.dispatchEvent(new CustomEvent('voice-assistant-listening-change', { detail: { listening } }));
+        }}
         onTriggerCheckout={(t) => {
           playCashSound();
         }}

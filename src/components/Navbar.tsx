@@ -15,7 +15,8 @@ import {
   Menu,
   X,
   TrendingUp,
-  Smartphone
+  Smartphone,
+  Mic
 } from 'lucide-react';
 import { Settings as SettingsType } from '../types';
 
@@ -44,6 +45,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [currentTime, setCurrentTime] = React.useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const [isVoiceActive, setIsVoiceActive] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    const handleVoiceChange = (e: any) => {
+      if (typeof e.detail?.listening === 'boolean') {
+        setIsVoiceActive(e.detail.listening);
+      }
+    };
+    window.addEventListener('voice-assistant-listening-change', handleVoiceChange);
+    return () => window.removeEventListener('voice-assistant-listening-change', handleVoiceChange);
+  }, []);
 
   React.useEffect(() => {
     const updateTime = () => {
@@ -164,6 +176,34 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right: Desplegable Menu Button, Clock & Quick Controls */}
         <div className="flex items-center space-x-2 sm:space-x-3">
           
+          {/* Botón Micrófono de Asistente de Voz al lado del botón Módulos */}
+          <button
+            id="navbar-voice-toggle-btn"
+            type="button"
+            onClick={() => {
+              if (activeTab !== 'pos') {
+                onSelectTab('pos');
+              }
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('toggle-voice-assistant'));
+              }, activeTab !== 'pos' ? 80 : 0);
+            }}
+            className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 border ${
+              isVoiceActive
+                ? 'bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white border-red-300 ring-2 ring-red-400 animate-pulse shadow-red-500/30'
+                : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-400/80 shadow-emerald-900/20'
+            }`}
+            title="Activar o pausar Asistente de Voz Zákia (Dictar productos con tu voz)"
+          >
+            <Mic className={`w-4 h-4 ${isVoiceActive ? 'text-white animate-bounce' : 'text-emerald-100 animate-pulse'}`} />
+            <span className="font-extrabold text-[11px] sm:text-xs">
+              {isVoiceActive ? 'Dictando...' : 'Voz'}
+            </span>
+            {isVoiceActive && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping shrink-0" />
+            )}
+          </button>
+
           {/* Main Desplegable Menu Button (Solo en el desplegable están Mostrador e Historial) */}
           <div className="relative">
             <button
