@@ -24,6 +24,7 @@ import {
   parseVoiceCommandWithAI, 
   resetVoiceSession,
   removeVoiceSessionItem,
+  speakText,
   createSpeechRecognitionInstance, 
   isSpeechRecognitionSupported, 
   VoiceCommandResult, 
@@ -39,6 +40,8 @@ interface VoiceAssistantModalProps {
   currentTicketCount?: number;
   onListeningStateChange?: (isListening: boolean) => void;
   onTriggerCheckout?: (total: number) => void;
+  onTriggerCardCheckout?: (total: number) => void;
+  onCashReceived?: (cash: number, change: number) => void;
 }
 
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
@@ -48,7 +51,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   onRemoveItemFromTicket,
   currentTicketCount = 0,
   onListeningStateChange,
-  onTriggerCheckout
+  onTriggerCheckout,
+  onTriggerCardCheckout,
+  onCashReceived
 }) => {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [activeSessionText, setActiveSessionText] = useState<string>('');
@@ -78,11 +83,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   // Quick test phrases for 1-touch testing
   const examplePhrases = [
-    '2 de 5 más 3 de 10',
-    'más 5 de 3',
-    'más una nata y un queso',
-    'cuenta',
-    'cerrar'
+    '2 bolillos',
+    'más 2 tradicionales',
+    'más 1 relleno',
+    'recibo 200',
+    'cobro con tarjeta',
+    'cuenta'
   ];
 
   // Stop listening helper
@@ -180,7 +186,60 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
       const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
 
-      // 2. Check if user gave the "cuenta" command to send final total to POS
+      // 2. Check if user spoke "cobro con tarjeta" / "pago con tarjeta" -> Enviar el ticket con tarjeta
+      if (result.isCardPayment) {
+        playCashSound();
+        playBeep(950, 'sine', 0.1);
+        const finalTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
+
+        // If items were also dictated in the same sentence (e.g. "2 bolillos y cobro con tarjeta")
+        if (itemsToAdd.length > 0 && shouldAutoAdd) {
+          onAddItemsToTicket(itemsToAdd);
+        }
+
+        speakText("Cobro con tarjeta, enviando ticket");
+        setSuccessToast(`💳 Cobro con Tarjeta — Enviando ticket... Total: $${finalTotal.toFixed(2)}`);
+        
+        setTimeout(() => {
+          if (onTriggerCardCheckout) {
+            onTriggerCardCheckout(finalTotal);
+          }
+        }, 120);
+
+        setTimeout(() => setSuccessToast(''), 4500);
+        return;
+      }
+
+      // 3. Check if user spoke "recibo 500", "recibo 200", etc. -> Decir cuánto cambio dar
+      if (result.cashReceived !== undefined) {
+        const cash = result.cashReceived;
+        const currentTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
+        const change = Math.round((cash - currentTotal) * 100) / 100;
+
+        if (itemsToAdd.length > 0 && shouldAutoAdd) {
+          onAddItemsToTicket(itemsToAdd);
+        }
+
+        if (onCashReceived) {
+          onCashReceived(cash, change);
+        }
+
+        if (change >= 0) {
+          const speechMsg = change === 0 ? "Pago exacto, sin cambio" : `El cambio es de ${change} pesos`;
+          speakText(speechMsg);
+          setSuccessToast(`💵 Recibido: $${cash}.00 | 🪙 Cambio: $${change}.00`);
+        } else {
+          const shortage = Math.abs(change);
+          const speechMsg = `Faltan ${shortage} pesos para completar la cuenta`;
+          speakText(speechMsg);
+          setSuccessToast(`⚠️ Recibido: $${cash}.00 | Faltan: $${shortage}.00`);
+        }
+
+        setTimeout(() => setSuccessToast(''), 6000);
+        return;
+      }
+
+      // 4. Check if user gave the "cuenta" command to send final total to POS
       if (result.isFinalCheckout) {
         playCashSound();
         playBeep(950, 'sine', 0.1);
@@ -201,7 +260,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         return;
       }
 
-      // 3. Normal items dictation
+      // 5. Normal items dictation
       if (itemsToAdd.length === 0) {
         setErrorMessage(`No se identificó producto en: "${rawText}". Di: "2 de 5", "más 3 de 10", "cuenta" o "cerrar".`);
         playBeep(350, 'sawtooth', 0.12);
@@ -748,11 +807,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               <span>Palabras Clave Admitidas:</span>
             </div>
             <ul className="list-disc pl-4 space-y-0.5 text-[10px]">
-              <li><strong>"2 de 5", "3 de 10", "5 de 3"</strong>: Suma piezas de pan.</li>
-              <li><strong>"MÁS"</strong>: Suma a la venta acumulativa actual (ej. <em>"más 2 de 10 más un queso"</em>).</li>
-              <li><strong>"CUENTA"</strong>: Envía el total final acumulado al POS.</li>
+              <li><strong>"Bolillo" ($5)</strong>: ej. <em>"2 bolillos"</em>, <em>"un bolillo"</em> ($5 pesos c/u).</li>
+              <li><strong>"Tradicional" ($12)</strong>: ej. <em>"3 tradicionales"</em> ($12 pesos c/u).</li>
+              <li><strong>"Relleno" ($18)</strong>: ej. <em>"2 rellenos"</em> ($18 pesos c/u).</li>
+              <li><strong>"X de Y"</strong>: ej. <em>"2 de 5"</em>, <em>"3 de 10"</em>, <em>"5 de 18"</em>.</li>
+              <li><strong>"MÁS"</strong>: Suma a la venta acumulativa actual (ej. <em>"más 2 bolillos más un queso"</em>).</li>
+              <li><strong>"Cobro con tarjeta" / "Pago con tarjeta"</strong>: Envía el ticket automáticamente pagado con tarjeta.</li>
+              <li><strong>"Recibo 500" / "Recibo 200"</strong>: Dice en voz alta cuánto cambio dar y lo calcula en pantalla.</li>
+              <li><strong>"CUENTA"</strong>: Envía el total final acumulado al mostrador.</li>
               <li><strong>"CERRAR" / "TERMINAR"</strong>: Palabra de cierre que apaga el micrófono.</li>
-              <li>El micrófono <strong>no se apaga</strong> al terminar de hablar, se mantiene escuchando continuamente.</li>
             </ul>
           </div>
         )}

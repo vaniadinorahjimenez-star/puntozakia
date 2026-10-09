@@ -539,6 +539,9 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                 // 2. Detect "cuenta" or "cobrar" (sends final total to POS / triggers checkout)
                 const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(normTranscript);
 
+                // 3. Detect card payment command
+                const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|tarjeta)\b/.test(normTranscript);
+
                 // Deterministic local parser for items in current transcript
                 const parseItemsFromText = (text: string) => {
                   const NUMBER_MAP: Record<string, number> = {
@@ -548,7 +551,9 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                     'dieciséis': 16, 'diecisiete': 17, 'dieciocho': 18, 'diecinueve': 19,
                     'veinte': 20, 'veintiuno': 21, 'veintidos': 22, 'veintitres': 23,
                     'veinticuatro': 24, 'veinticinco': 25, 'treinta': 30, 'treinta y cinco': 35,
-                    'cincuenta': 50, 'noventa': 90, 'cien': 100, 'ciento cincuenta': 150
+                    'cincuenta': 50, 'noventa': 90, 'cien': 100, 'ciento': 100, 'ciento cincuenta': 150,
+                    'doscientos': 200, 'trescientos': 300, 'cuatrocientos': 400, 'quinientos': 500,
+                    'seiscientos': 600, 'setecientos': 700, 'ochocientos': 800, 'novecientos': 900, 'mil': 1000
                   };
                   const parseNum = (tok: string): number | null => {
                     if (!tok) return null;
@@ -559,7 +564,7 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                   };
 
                   let w = text
-                    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar)\b/g, ' ')
+                    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
                     .replace(/\s+/g, ' ')
                     .trim();
 
@@ -583,8 +588,11 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                   }
                   w = w.replace(postreRegex, ' ');
 
-                  // Fixed products
+                  // Fixed products including Bolillo ($5), Tradicional ($12), Relleno ($18)
                   const fixedProds = [
+                    { name: 'Pieza $5', price: 5.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?bolillos?\b/g },
+                    { name: 'Pieza $12', price: 12.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?tradicional(?:es)?\b/g },
+                    { name: 'Pieza $18', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?rellenos?\b/g },
                     { name: 'Lechita', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?lechitas?\b/g },
                     { name: 'Leche', price: 35.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?leches?\b/g },
                     { name: 'Nata', price: 90.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?natas?\b/g },
@@ -709,6 +717,30 @@ Devuelve: { "items": [{ "cantidad": 2, "concepto": "Pieza $5", "precio_unitario"
                   currentSession.lastUpdated = Date.now();
                 }
 
+                // Detect cash received command (e.g., "recibo 500", "recibo 200", "pagan con 500", "me dan 200", etc.)
+                const cashRegex = /\b(?:recibo|recibe|pagan\s+con|paga\s+con|me\s+dan|dan|billete\s+de)\s+(\d+|cincuenta|cien|ciento|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil)\b/g;
+                const cashMatch = cashRegex.exec(normTranscript);
+                let cashReceived: number | undefined;
+                if (cashMatch) {
+                  const NUMBER_MAP: Record<string, number> = {
+                    'cincuenta': 50, 'cien': 100, 'ciento': 100, 'doscientos': 200,
+                    'trescientos': 300, 'cuatrocientos': 400, 'quinientos': 500,
+                    'seiscientos': 600, 'setecientos': 700, 'ochocientos': 800,
+                    'novecientos': 900, 'mil': 1000
+                  };
+                  const rawC = cashMatch[1].trim();
+                  const n = parseInt(rawC, 10);
+                  if (!isNaN(n) && n > 0) {
+                    cashReceived = n;
+                  } else if (NUMBER_MAP[rawC]) {
+                    cashReceived = NUMBER_MAP[rawC];
+                  }
+                }
+
+                const changeToGive = (cashReceived !== undefined && currentSession.total > 0)
+                  ? Math.round((cashReceived - currentSession.total) * 100) / 100
+                  : undefined;
+
                 const responseData = {
                   sessionId,
                   // The items added in this specific turn:
@@ -719,6 +751,11 @@ Devuelve: { "items": [{ "cantidad": 2, "concepto": "Pieza $5", "precio_unitario"
                   total: currentSession.total,
                   // Trigger sending final total / checkout in POS when 'cuenta' is spoken:
                   isFinalCheckout: isCuentaFinal,
+                  // Trigger card payment and ticket submission when 'cobro con tarjeta' is spoken:
+                  isCardPayment: isCardPayment,
+                  // Cash received amount and change calculation:
+                  cashReceived: cashReceived,
+                  changeToGive: changeToGive,
                   // Close recognition only when user says a closing word:
                   shouldCloseMic: isCloseWord,
                   transcript

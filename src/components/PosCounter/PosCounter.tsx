@@ -1058,6 +1058,17 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setShowNewCustomerForm(false);
   };
 
+  // Handle direct card payment triggered by voice command ("cobro con tarjeta" / "pago con tarjeta")
+  const handleVoiceCardCheckout = () => {
+    if (ticketItems.length === 0) return;
+    playCashSound();
+    handleCardCheckout({
+      terminal: 'clip',
+      authCode: 'VOZ-TARJETA',
+      reference: getNextTicketFolio(tickets)
+    });
+  };
+
   // Lista de clientes frecuentes para Pide y Recoge (Trascos, Magda, Bollos David, Deliz)
   const availablePickupCustomers = React.useMemo(() => {
     const allowed = ['trascos', 'magda', 'bollos david', 'deliz'];
@@ -1431,45 +1442,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               </span>
             </div>
 
-            {/* Switch Buttons, Asistente de Voz y Multiplicador */}
+            {/* Switch Buttons Turnos y Multiplicador */}
             <div className="flex items-center gap-1.5 sm:gap-2">
-              {/* Botón Asistente de Voz Punto Zákia */}
-              <button
-                id="voice-assistant-modal-btn"
-                type="button"
-                onClick={() => {
-                  playBeep(700, 'sine', 0.04);
-                  setShowVoiceModal(prev => !prev);
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-black text-[11px] shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 ${
-                  isVoiceListening
-                    ? 'bg-red-600 hover:bg-red-700 text-white ring-2 ring-red-400 shadow-red-500/40 animate-pulse'
-                    : 'bg-gradient-to-r from-orange-600 via-amber-600 to-orange-500 hover:from-orange-500 hover:to-amber-500 text-white ring-1 ring-amber-300'
-                }`}
-                title="Dictar productos con tu voz (Atajo tecla 'V')"
-              >
-                {isVoiceListening ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                    <span>Escuchando...</span>
-                    {/* Mini animated sound wave inside button */}
-                    <div className="flex items-end gap-0.5 h-3 px-1 bg-black/30 rounded">
-                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-1"></span>
-                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-2"></span>
-                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-3"></span>
-                      <span className="w-0.5 bg-white rounded-full animate-voice-wave-4"></span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <Mic className="w-3.5 h-3.5 animate-pulse text-amber-200" />
-                    <span className="hidden sm:inline">Dictar por Voz</span>
-                    <span className="sm:hidden">Voz</span>
-                    <span className="text-[9px] bg-black/20 text-amber-100 px-1 py-0.2 rounded font-mono font-bold">Zákia</span>
-                  </>
-                )}
-              </button>
-
               <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-lg border border-slate-200 shadow-2xs">
                 <button
                   id="shift-switch-turno1-btn"
@@ -4237,6 +4211,12 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         }}
         onTriggerCheckout={(t) => {
           playCashSound();
+        }}
+        onTriggerCardCheckout={(t) => {
+          handleVoiceCardCheckout();
+        }}
+        onCashReceived={(cash, change) => {
+          setCashGivenInput(cash.toString());
         }}
       />
     </div>

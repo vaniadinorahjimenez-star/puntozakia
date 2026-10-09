@@ -16,6 +16,9 @@ export interface VoiceCommandResult {
   newItems?: VoiceCommandItem[];
   rawTranscript?: string;
   isFinalCheckout?: boolean;
+  isCardPayment?: boolean;
+  cashReceived?: number;
+  changeToGive?: number;
   shouldCloseMic?: boolean;
   sessionId?: string;
   source?: 'local_rules' | 'gemini_ai' | 'session_api';
@@ -57,7 +60,17 @@ const NUMBER_WORDS: Record<string, number> = {
   'cincuenta': 50,
   'noventa': 90,
   'cien': 100,
-  'ciento cincuenta': 150
+  'ciento': 100,
+  'ciento cincuenta': 150,
+  'doscientos': 200,
+  'trescientos': 300,
+  'cuatrocientos': 400,
+  'quinientos': 500,
+  'seiscientos': 600,
+  'setecientos': 700,
+  'ochocientos': 800,
+  'novecientos': 900,
+  'mil': 1000
 };
 
 // Normalize text for parsing
@@ -108,11 +121,25 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   // Detect 'cuenta' command
   const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(norm);
 
+  // Detect card payment command ("cobro con tarjeta", "pago con tarjeta", "cobro tarjeta", "pago tarjeta", "tarjeta")
+  const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|tarjeta)\b/.test(norm);
+
+  // Detect cash received command (e.g., "recibo 500", "recibo 200", "pagan con 500", "me dan 200", "billete de 500", etc.)
+  const cashRegex = /\b(?:recibo|recibe|pagan\s+con|paga\s+con|me\s+dan|dan|billete\s+de)\s+(\d+|cincuenta|cien|ciento|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil)\b/g;
+  const cashMatch = cashRegex.exec(norm);
+  let cashReceived: number | undefined;
+  if (cashMatch) {
+    const parsedCash = parseNumber(cashMatch[1]);
+    if (parsedCash && parsedCash > 0) {
+      cashReceived = parsedCash;
+    }
+  }
+
   let workingText = norm;
 
   // Remove filler and activation words
   workingText = workingText
-    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar)\b/g, ' ')
+    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -137,8 +164,27 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   }
   workingText = workingText.replace(postreRegex, ' ');
 
-  // 2. Extract Fixed Lácteos & Acompañamientos
+  // 2. Extract Fixed Products including user's specific bakery dictionary:
+  // - Bolillo -> $5 pesos (Pieza $5)
+  // - Tradicional -> $12 pesos (Pieza $12)
+  // - Relleno -> $18 pesos (Pieza $18)
+  // - Lechita -> $18.00, Leche -> $35.00, Nata -> $90.00, Queso -> $150.00, Domo -> $25.00
   const fixedProductsConfig: Array<{ name: string; price: number; regex: RegExp }> = [
+    {
+      name: 'Pieza $5',
+      price: 5.00,
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?bolillos?\b/g
+    },
+    {
+      name: 'Pieza $12',
+      price: 12.00,
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?tradicional(?:es)?\b/g
+    },
+    {
+      name: 'Pieza $18',
+      price: 18.00,
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?rellenos?\b/g
+    },
     {
       name: 'Lechita',
       price: 18.00,
@@ -223,16 +269,40 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
 
   // Calculate total
   const total = Math.round(items.reduce((acc, curr) => acc + curr.subtotal, 0) * 100) / 100;
+  const changeToGive = (cashReceived !== undefined && total > 0) ? Math.round((cashReceived - total) * 100) / 100 : undefined;
 
   return {
     items,
     newItems: items,
     total,
     isFinalCheckout: isCuentaFinal,
+    isCardPayment,
+    cashReceived,
+    changeToGive,
     shouldCloseMic: isCloseWord,
     rawTranscript: transcript,
     source: 'local_rules'
   };
+}
+
+/**
+ * Speaks text aloud using SpeechSynthesis API (Text-to-Speech) in Mexican Spanish.
+ */
+export function speakText(text: string): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'es-MX';
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+    const voices = window.speechSynthesis.getVoices();
+    const esVoice = voices.find(v => v.lang.startsWith('es-MX')) || voices.find(v => v.lang.startsWith('es'));
+    if (esVoice) utterance.voice = esVoice;
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.warn('Speech synthesis error:', err);
+  }
 }
 
 /**
@@ -259,11 +329,21 @@ export async function parseVoiceCommandWithAI(
 
     if (response.ok) {
       const data = await response.json();
+      const currentItems = Array.isArray(data.items) ? data.items : localResult.items;
+      const currentTotal = typeof data.total === 'number' ? data.total : localResult.total;
+      const effectiveCashReceived = typeof data.cashReceived === 'number' ? data.cashReceived : localResult.cashReceived;
+      const effectiveChange = (effectiveCashReceived !== undefined && currentTotal > 0)
+        ? Math.round((effectiveCashReceived - currentTotal) * 100) / 100
+        : localResult.changeToGive;
+
       return {
-        items: Array.isArray(data.items) ? data.items : localResult.items,
+        items: currentItems,
         newItems: Array.isArray(data.newItems) && data.newItems.length > 0 ? data.newItems : localResult.items,
-        total: typeof data.total === 'number' ? data.total : localResult.total,
+        total: currentTotal,
         isFinalCheckout: typeof data.isFinalCheckout === 'boolean' ? data.isFinalCheckout : localResult.isFinalCheckout,
+        isCardPayment: typeof data.isCardPayment === 'boolean' ? data.isCardPayment : localResult.isCardPayment,
+        cashReceived: effectiveCashReceived,
+        changeToGive: effectiveChange,
         shouldCloseMic: typeof data.shouldCloseMic === 'boolean' ? data.shouldCloseMic : localResult.shouldCloseMic,
         rawTranscript: transcript,
         sessionId: data.sessionId || sessionId,
