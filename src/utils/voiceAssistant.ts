@@ -139,7 +139,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
 
   // Remove filler and activation words
   workingText = workingText
-    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
+    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|cobro|iniciar cobro|abrir cobro|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -231,7 +231,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   const qtyWords = 'un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|veinticinco';
   const priceWords = 'tres|cinco|ocho|diez|doce|quince|dieciocho|veinte|veinticinco|treinta|treinta y cinco|cincuenta|noventa|cien|ciento cincuenta';
 
-  const xDeYRegex = new RegExp(`\\b(\\d+|${qtyWords})\\s+(?:piezas?|panes?|pzas?)?\\s*de\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
+  const xDeYRegex = new RegExp(`\\b(\\d+|${qtyWords})\\s+(?:piezas?|panes?|pzas?|conchas?|donas?|cuernos?|orejas?|bisquets?|productos?|[a-záéíóúñ]+)?\\s*(?:de\\s+a|de|a)\\s+\\$?(\\d+|${priceWords})(?:\\s*(?:pesos?|mxn))?\\b`, 'g');
 
   let xDeYMatch: RegExpExecArray | null;
   while ((xDeYMatch = xDeYRegex.exec(workingText)) !== null) {
@@ -251,7 +251,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   workingText = workingText.replace(xDeYRegex, ' ');
 
   // 4. Standalone "de Y" (implied quantity 1, e.g. "mas de 10", "y de 5")
-  const standaloneDeRegex = new RegExp(`\\bde\\s+(?:a\\s+)?\\$?(\\d+|${priceWords})\\b`, 'g');
+  const standaloneDeRegex = new RegExp(`\\b(?:de\\s+a|de|a)\\s+\\$?(\\d+|${priceWords})(?:\\s*(?:pesos?|mxn))?\\b`, 'g');
   let standaloneMatch: RegExpExecArray | null;
   while ((standaloneMatch = standaloneDeRegex.exec(workingText)) !== null) {
     const rawPrice = standaloneMatch[1];

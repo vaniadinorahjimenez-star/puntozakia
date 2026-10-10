@@ -82,6 +82,44 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const lastProcessedTimeRef = useRef<number>(0);
   const speechSupported = isSpeechRecognitionSupported();
 
+  // Refs to eliminate stale closure bugs during speech recognition
+  const isCobroActiveRef = useRef<boolean>(false);
+  const autoAddToTicketRef = useRef<boolean>(true);
+  const onAddItemsToTicketRef = useRef(onAddItemsToTicket);
+  const onTriggerCheckoutRef = useRef(onTriggerCheckout);
+  const onTriggerCardCheckoutRef = useRef(onTriggerCardCheckout);
+  const onCashReceivedRef = useRef(onCashReceived);
+  const currentTicketTotalRef = useRef(currentTicketTotal);
+  const processDictationRef = useRef<(rawText: string, shouldAutoAdd?: boolean) => void>(() => {});
+
+  useEffect(() => {
+    isCobroActiveRef.current = isCobroActive;
+  }, [isCobroActive]);
+
+  useEffect(() => {
+    autoAddToTicketRef.current = autoAddToTicket;
+  }, [autoAddToTicket]);
+
+  useEffect(() => {
+    onAddItemsToTicketRef.current = onAddItemsToTicket;
+  }, [onAddItemsToTicket]);
+
+  useEffect(() => {
+    onTriggerCheckoutRef.current = onTriggerCheckout;
+  }, [onTriggerCheckout]);
+
+  useEffect(() => {
+    onTriggerCardCheckoutRef.current = onTriggerCardCheckout;
+  }, [onTriggerCardCheckout]);
+
+  useEffect(() => {
+    onCashReceivedRef.current = onCashReceived;
+  }, [onCashReceived]);
+
+  useEffect(() => {
+    currentTicketTotalRef.current = currentTicketTotal;
+  }, [currentTicketTotal]);
+
   // Inform parent component about listening state
   useEffect(() => {
     onListeningStateChange?.(isListening);
@@ -162,6 +200,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   };
 
   const handleActivateCobro = () => {
+    isCobroActiveRef.current = true;
     setIsCobroActive(true);
     playCashSound();
     playBeep(880, 'sine', 0.08);
@@ -171,6 +210,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   };
 
   const handleCloseAudio = () => {
+    isCobroActiveRef.current = false;
     setIsCobroActive(false);
     stopListening();
     shouldKeepListeningRef.current = false;
@@ -178,7 +218,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   };
 
   // Process text instantly using local deterministic parser (Sub-1ms reaction time)
-  const processDictation = (rawText: string, shouldAutoAdd: boolean = autoAddToTicket) => {
+  const processDictation = (rawText: string, shouldAutoAdd: boolean = autoAddToTicketRef.current) => {
     const cleanText = rawText.trim();
     if (!cleanText) return;
 
@@ -192,42 +232,46 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
     const norm = normalizeSpokenText(cleanText);
 
-    // 1. If cobro is not active: ONLY activate when they say "cobrar" or "cobro"
+    const wasActiveInitially = isCobroActiveRef.current;
+    const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro)\b/.test(norm);
+
+    // 1. If cobro is not active yet: ONLY activate when they say "cobrar" or "cobro"
     // "solo activa el audio cuando diga cobrar, antes no, porque marca mal y de más cualquier palabra que digo"
-    if (!isCobroActive) {
-      if (/\b(cobrar|cobro|iniciar cobro|activar)\b/.test(norm)) {
-        handleActivateCobro();
+    if (!wasActiveInitially) {
+      if (!containsCobroWakeWord) {
+        // Ignore any background chatter while not in active cobro mode!
+        return;
       }
-      return; // Ignore any other word completely while not in active cobro mode!
+      // "cobrar" spoken! Activate cobro mode now!
+      handleActivateCobro();
+      // Notice: If the utterance ALSO contains items (e.g. "cobrar 3 bolillos", "cobrar 3 de 5"),
+      // we must NOT return — continue below to parse and mark those items on the ticket!
     }
 
     // 2. Cobro is ACTIVE: Parse locally in <0.1ms with zero network lag!
     const result = parseVoiceCommandLocally(cleanText);
     setParsedResult(result);
 
-    // Check if closing/finalizing keywords spoken:
-    // "y cierra el audio cuando diga cobrar"
-    const hasCobrarFinal = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo)\b/.test(norm);
-
-    // Card payment direct to Clip terminal:
+    // 3. Card payment direct to Clip terminal:
     // "que no mande ticket cuando le diga pagar con tarjeta, que mande directo a cobro a la terminal"
     if (result.isCardPayment) {
       playCashSound();
       playBeep(950, 'sine', 0.1);
-      const finalTotal = (currentTicketTotal && currentTicketTotal > 0)
-        ? currentTicketTotal
-        : (result.total > 0 ? result.total : sessionTotalAccumulated);
 
       const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
       if (itemsToAdd.length > 0 && shouldAutoAdd) {
-        onAddItemsToTicket(itemsToAdd);
+        onAddItemsToTicketRef.current?.(itemsToAdd);
       }
 
+      const effectiveTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
+        ? currentTicketTotalRef.current
+        : (result.total > 0 ? result.total : sessionTotalAccumulated);
+
       speakText("Cobro con tarjeta, abriendo terminal");
-      setSuccessToast(`💳 Enviando cobro directo a la terminal Clip... Total: $${finalTotal.toFixed(2)}`);
+      setSuccessToast(`💳 Enviando cobro directo a la terminal Clip... Total: $${effectiveTotal.toFixed(2)}`);
 
       setTimeout(() => {
-        onTriggerCardCheckout?.(finalTotal);
+        onTriggerCardCheckoutRef.current?.(effectiveTotal);
       }, 100);
 
       // Cierra el audio al mandar a terminal
@@ -237,21 +281,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
-    // Cash received & change calculation:
+    // 4. Cash received & change calculation:
     // "y si dice recibo 500, o 200, etc, le diga cuanto cambio dar"
     if (result.cashReceived !== undefined) {
       const cash = result.cashReceived;
-      const effectiveTotal = (currentTicketTotal && currentTicketTotal > 0)
-        ? currentTicketTotal
+      const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
+      if (itemsToAdd.length > 0 && shouldAutoAdd) {
+        onAddItemsToTicketRef.current?.(itemsToAdd);
+      }
+
+      const effectiveTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
+        ? currentTicketTotalRef.current
         : (result.total > 0 ? result.total : sessionTotalAccumulated);
       const change = Math.round((cash - effectiveTotal) * 100) / 100;
 
-      const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
-      if (itemsToAdd.length > 0 && shouldAutoAdd) {
-        onAddItemsToTicket(itemsToAdd);
-      }
-
-      onCashReceived?.(cash, change);
+      onCashReceivedRef.current?.(cash, change);
 
       if (change >= 0) {
         const speechMsg = change === 0 ? "Pago exacto, sin cambio" : `El cambio es de ${change} pesos`;
@@ -267,7 +311,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
-    // Normal items dictation (Bolillo $5, Tradicional $12, Relleno $18, etc.)
+    // 5. Normal items dictation (Bolillo $5, Tradicional $12, Relleno $18, 3 de 5, etc.)
     const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
     if (itemsToAdd.length > 0) {
       playCashSound();
@@ -279,7 +323,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       setSessionTotalAccumulated(newTotal);
 
       if (shouldAutoAdd) {
-        onAddItemsToTicket(itemsToAdd);
+        onAddItemsToTicketRef.current?.(itemsToAdd);
         setSuccessToast(`+${itemsToAdd.length} añadido(s) ($${itemsToAdd.reduce((a, b) => a + b.subtotal, 0).toFixed(2)})`);
         setTimeout(() => setSuccessToast(''), 2500);
       }
@@ -292,22 +336,31 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       ]);
     }
 
-    // If "cobrar" or "cuenta" spoken to finalize:
+    // 6. Check if closing/finalizing keywords spoken:
     // "y cierra el audio cuando diga cobrar"
-    if (hasCobrarFinal && (itemsToAdd.length === 0 || norm.includes('cobrar') || norm.includes('cuenta'))) {
-      const finalTotal = (currentTicketTotal && currentTicketTotal > 0)
-        ? currentTicketTotal
-        : (result.total > 0 ? result.total : sessionTotalAccumulated);
+    // CRITICAL: Only close if cobro was ALREADY active when this utterance began (wasActiveInitially === true)!
+    // This allows "cobrar 3 de 5" to activate and add the items without prematurely closing.
+    const hasClosingWord = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo)\b/.test(norm);
+    if (wasActiveInitially && hasClosingWord) {
+      const addedSubtotal = itemsToAdd.reduce((a, b) => a + b.subtotal, 0);
+      const finalTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
+        ? (currentTicketTotalRef.current + (shouldAutoAdd ? 0 : addedSubtotal))
+        : (result.total > 0 ? result.total : (sessionTotalAccumulated + addedSubtotal));
 
       playCashSound();
       playBeep(950, 'sine', 0.1);
       setSuccessToast(`¡Cobro completado! Total: $${finalTotal.toFixed(2)}`);
-      onTriggerCheckout?.(finalTotal);
+      onTriggerCheckoutRef.current?.(finalTotal);
       speakText("Cobro listo");
 
       handleCloseAudio();
     }
   };
+
+  // Keep latest processDictation reference always fresh for speech recognition event handlers
+  useEffect(() => {
+    processDictationRef.current = processDictation;
+  });
 
   // Start continuous listening
   const startListening = () => {
@@ -361,37 +414,37 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           }
           setActiveSessionText(cleanFinal);
           setInterimText('');
-          processDictation(cleanFinal);
+          processDictationRef.current(cleanFinal);
         } else if (cleanInterim) {
           setInterimText(cleanInterim);
           setActiveSessionText(cleanInterim);
 
           const normInterim = normalizeSpokenText(cleanInterim);
 
-          // Fast-path immediate detection for wake word "cobrar"
-          if (!isCobroActive && /\b(cobrar|cobro|iniciar cobro)\b/.test(normInterim)) {
+          // Fast-path immediate detection for wake word "cobrar" when spoken by itself
+          if (!isCobroActiveRef.current && /^(cobrar|cobro|iniciar cobro|activar)$/.test(normInterim)) {
             handleActivateCobro();
             setInterimText('');
             return;
           }
 
           // Fast-path immediate detection for card payment
-          if (isCobroActive && /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|terminal)\b/.test(normInterim)) {
+          if (isCobroActiveRef.current && /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|terminal)\b/.test(normInterim)) {
             if (interimDebounceTimerRef.current) clearTimeout(interimDebounceTimerRef.current);
-            processDictation(cleanInterim);
+            processDictationRef.current(cleanInterim);
             setInterimText('');
             return;
           }
 
-          // Ultra-fast streaming debounce (180ms) for real-time dictation reaction!
-          if (isCobroActive) {
+          // Debounce fallback if browser delays emitting isFinal (550ms)
+          if (isCobroActiveRef.current) {
             if (interimDebounceTimerRef.current) clearTimeout(interimDebounceTimerRef.current);
             interimDebounceTimerRef.current = setTimeout(() => {
               if (cleanInterim && shouldKeepListeningRef.current) {
-                processDictation(cleanInterim);
+                processDictationRef.current(cleanInterim);
                 setInterimText('');
               }
-            }, 180);
+            }, 550);
           }
         }
       };

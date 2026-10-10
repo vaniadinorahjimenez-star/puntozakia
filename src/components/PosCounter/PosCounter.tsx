@@ -553,8 +553,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setTicketItems(prev => {
       let updated = [...prev];
       for (const vItem of voiceItems) {
-        // Find existing match by price and name
-        const existingIdx = updated.findIndex(it => it.price === vItem.precio_unitario && it.name === vItem.concepto);
+        // Find existing match by price and name, or matching unit price with generic bakery price item
+        const existingIdx = updated.findIndex(it => 
+          (it.price === vItem.precio_unitario && it.name === vItem.concepto) ||
+          (it.price === vItem.precio_unitario && (vItem.concepto.startsWith('Pieza $') || it.name.startsWith('Pieza $') || (vItem.precio_unitario === 5 && (it.name.includes('Bolillo') || vItem.concepto.includes('Bolillo')))))
+        );
         if (existingIdx >= 0) {
           const cur = updated[existingIdx];
           const newQty = cur.quantity + vItem.cantidad;
