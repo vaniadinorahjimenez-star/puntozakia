@@ -493,12 +493,12 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   // Points that will be earned in this purchase ($20 pesos = 1 point)
   const pointsEarned = Math.floor(total / (settings.loyaltyPointsPerPesos || 20));
 
-  // Evitar doble registro en pantallas táctiles por disparos combinados (pointerdown + click)
+  // Evitar doble registro en pantallas táctiles por disparos combinados (pointerdown + click retrasado)
   const lastPricePointerTimeRef = useRef<number>(0);
 
   const triggerAddPriceTouch = (price: number, name?: string, productId?: string) => {
     const now = Date.now();
-    if (now - lastPricePointerTimeRef.current < 200) {
+    if (now - lastPricePointerTimeRef.current < 350) {
       return;
     }
     lastPricePointerTimeRef.current = now;
@@ -520,7 +520,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const handlePointerDownMultiplier = (e: React.PointerEvent, num: number) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const now = Date.now();
-    if (now - lastMultiplierPointerTimeRef.current < 200) return;
+    if (now - lastMultiplierPointerTimeRef.current < 250) return;
     lastMultiplierPointerTimeRef.current = now;
     playBeep(500 + num * 30, 'sine', 0.04);
     setSelectedMultiplier(num);
@@ -529,9 +529,15 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Add item with current multiplier
   const handleAddPrice = (price: number, name?: string, productId?: string) => {
+    const now = Date.now();
+    if (now - lastPricePointerTimeRef.current < 300) {
+      // Evitar doble disparo de eventos sintéticos subsecuentes
+      return;
+    }
+    lastPricePointerTimeRef.current = now;
     playBeep(700, 'sine', 0.06);
     const qty = selectedMultiplier > 0 ? selectedMultiplier : 1;
-    const itemName = name || (price === 8 ? 'Bolillo / Telera ($8)' : price === 10 ? 'Pan Dulce Tradicional ($10)' : price === 12 ? 'Dona / Especial ($12)' : price === 18 ? 'Cuerno Mantequilla ($18)' : price === 20 ? 'Oreja / Empanada ($20)' : price === 25 ? 'Panqué Nuez/Elote ($25)' : price === 35 ? 'Baguette Rústica ($35)' : price === 90 ? 'Rosca Mediana ($90)' : price === 100 ? 'Pastel / Tarta ($100)' : price === 150 ? 'Pastel Grande 3 Leches ($150)' : `Pan de $${price}`);
+    const itemName = name || (price === 5 ? 'Bolillo ($5)' : price === 8 ? 'Bolillo / Telera ($8)' : price === 10 ? 'Pan Dulce Tradicional ($10)' : price === 12 ? 'Pan Tradicional ($12)' : price === 18 ? 'Pan Relleno ($18)' : price === 20 ? 'Oreja / Empanada ($20)' : price === 25 ? 'Panqué Nuez/Elote ($25)' : price === 35 ? 'Baguette Rústica ($35)' : price === 90 ? 'Rosca Mediana ($90)' : price === 100 ? 'Pastel / Tarta ($100)' : price === 150 ? 'Pastel Grande 3 Leches ($150)' : `Pan de $${price}`);
 
     setTicketItems(prev => {
       // If same price already exists as the last entry or with same name, merge it or append
@@ -1058,15 +1064,13 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setShowNewCustomerForm(false);
   };
 
-  // Handle direct card payment triggered by voice command ("cobro con tarjeta" / "pago con tarjeta")
+  // Mandar directo a cobro a la terminal Clip al decir "pagar con tarjeta" / "cobro con tarjeta"
   const handleVoiceCardCheckout = () => {
     if (ticketItems.length === 0) return;
-    playCashSound();
-    handleCardCheckout({
-      terminal: 'clip',
-      authCode: 'VOZ-TARJETA',
-      reference: getNextTicketFolio(tickets)
-    });
+    playBeep(750, 'sine', 0.05);
+    const f = getNextTicketFolio(tickets);
+    setActiveCardFolio(f);
+    setShowClipModal(true);
   };
 
   // Lista de clientes frecuentes para Pide y Recoge (Trascos, Magda, Bollos David, Deliz)
@@ -1497,11 +1501,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
                     <span className="font-black text-xs uppercase tracking-wide text-white drop-shadow">
-                      🎙️ MICRÓFONO CONTINUO ACTIVO — Dicta libremente
+                      🎙️ ASISTENTE DE VOZ ACTIVO — Di "COBRAR" para dictar y cobrar
                     </span>
                   </div>
                   <p className="text-[11px] text-amber-100 font-medium leading-tight">
-                    Palabras clave: <strong>cuenta</strong> 2 de 5, <strong>más</strong> 3 de 10, <strong>5 de 3</strong>, <strong>una nata</strong>
+                    Palabras clave: <strong>bolillo</strong> ($5), <strong>tradicional</strong> ($12), <strong>relleno</strong> ($18), <strong>3 de 5</strong>, <strong>tarjeta</strong> o <strong>recibo 500</strong>
                   </p>
                 </div>
               </div>
@@ -1537,7 +1541,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                     key={num}
                     id={`qty-btn-${num}`}
                     type="button"
-                    onPointerDown={(e) => handlePointerDownMultiplier(e, num)}
                     onClick={() => {
                       playBeep(500 + num * 30, 'sine', 0.04);
                       setSelectedMultiplier(num);
@@ -1561,12 +1564,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="custom-multiplier-modal-btn"
                 type="button"
-                onPointerDown={(e) => {
-                  if (e.pointerType === 'mouse' && e.button !== 0) return;
-                  playBeep(700, 'sine', 0.04);
-                  setNumpadValue(selectedMultiplier > 10 ? selectedMultiplier.toString() : '');
-                  setShowNumpadModal(true);
-                }}
                 onClick={() => {
                   playBeep(700, 'sine', 0.04);
                   setNumpadValue(selectedMultiplier > 10 ? selectedMultiplier.toString() : '');
@@ -1607,7 +1604,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                     key={price}
                     id={`price-btn-${price}`}
                     type="button"
-                    onPointerDown={(e) => handlePointerDownPrice(e, price, `Pan ${displayPrice}`, prod?.id)}
                     onClick={() => triggerAddPriceTouch(price, `Pan ${displayPrice}`, prod?.id)}
                     className="touch-pos-btn select-none group relative bg-[#FAF8F6] hover:bg-[#FFF5F0] active:bg-[#FFEAE0] border-2 border-[#D5CFC5] hover:border-[#D95D39] active:border-[#D95D39] rounded-xl sm:rounded-2xl p-1 sm:p-1.5 flex flex-col items-center justify-center transition-all duration-75 active:scale-95 shadow-2xs hover:shadow-xs h-[58px] sm:h-[64px] lg:h-[68px] cursor-pointer"
                   >
@@ -1635,10 +1631,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="custom-price-btn"
                 type="button"
-                onPointerDown={(e) => {
-                  if (e.pointerType === 'mouse' && e.button !== 0) return;
-                  setShowCustomPriceModal(true);
-                }}
                 onClick={() => setShowCustomPriceModal(true)}
                 className="touch-pos-btn select-none bg-[#FFF5F0] hover:bg-[#FFEAE0] active:bg-[#FFDFD0] border-2 border-dashed border-[#D95D39] hover:border-[#D95D39] rounded-xl sm:rounded-2xl p-1 sm:p-1.5 flex flex-col items-center justify-center transition-all duration-75 active:scale-95 text-[#D95D39] shadow-2xs h-[58px] sm:h-[64px] lg:h-[68px] cursor-pointer"
                 title="Precio libre manual"
@@ -1677,7 +1669,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-p_leche"
                 type="button"
-                onPointerDown={(e) => handlePointerDownPrice(e, 35, 'Leche 1L $35', 'p_leche')}
                 onClick={() => triggerAddPriceTouch(35, 'Leche 1L $35', 'p_leche')}
                 className="touch-pos-btn select-none group relative bg-gradient-to-b from-sky-50 to-white hover:from-sky-100 active:from-sky-200 border-2 border-sky-300 hover:border-sky-600 rounded-xl px-1.5 py-1 flex items-center justify-between transition-all duration-75 active:scale-95 shadow-2xs h-[42px] sm:h-[46px] cursor-pointer"
                 title="Leche 1L $35"
@@ -1698,7 +1689,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-p_lechita"
                 type="button"
-                onPointerDown={(e) => handlePointerDownPrice(e, 18, 'Lechita $18', 'p_lechitas_18')}
                 onClick={() => triggerAddPriceTouch(18, 'Lechita $18', 'p_lechitas_18')}
                 className="touch-pos-btn select-none group relative bg-gradient-to-b from-sky-50 to-white hover:from-sky-100 active:from-sky-200 border-2 border-sky-300 hover:border-sky-600 rounded-xl px-1.5 py-1 flex items-center justify-between transition-all duration-75 active:scale-95 shadow-2xs h-[42px] sm:h-[46px] cursor-pointer"
                 title="Lechita $18"
@@ -1719,7 +1709,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-p_nata"
                 type="button"
-                onPointerDown={(e) => handlePointerDownPrice(e, 90, 'Nata $90', 'p_nata')}
                 onClick={() => triggerAddPriceTouch(90, 'Nata $90', 'p_nata')}
                 className="touch-pos-btn select-none group relative bg-gradient-to-b from-sky-50 to-white hover:from-sky-100 active:from-sky-200 border-2 border-sky-300 hover:border-sky-600 rounded-xl px-1.5 py-1 flex items-center justify-between transition-all duration-75 active:scale-95 shadow-2xs h-[42px] sm:h-[46px] cursor-pointer"
                 title="Nata $90"
@@ -1740,7 +1729,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-p_queso"
                 type="button"
-                onPointerDown={(e) => handlePointerDownPrice(e, 150, 'Queso $150', 'p_queso')}
                 onClick={() => triggerAddPriceTouch(150, 'Queso $150', 'p_queso')}
                 className="touch-pos-btn select-none group relative bg-gradient-to-b from-sky-50 to-white hover:from-sky-100 active:from-sky-200 border-2 border-sky-300 hover:border-sky-600 rounded-xl px-1.5 py-1 flex items-center justify-between transition-all duration-75 active:scale-95 shadow-2xs h-[42px] sm:h-[46px] cursor-pointer"
                 title="Queso $150"
@@ -1761,11 +1749,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-postres-dropdown"
                 type="button"
-                onPointerDown={(e) => {
-                  if (e.pointerType === 'mouse' && e.button !== 0) return;
-                  playBeep(750, 'sine', 0.04);
-                  setShowPostresModal(true);
-                }}
                 onClick={() => {
                   playBeep(750, 'sine', 0.04);
                   setShowPostresModal(true);
@@ -1787,7 +1770,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
               <button
                 id="companion-btn-domo-25"
                 type="button"
-                onPointerDown={(e) => handlePointerDownPrice(e, 25, 'Charola / Domo $25', 'p_domo_25')}
                 onClick={() => triggerAddPriceTouch(25, 'Charola / Domo $25', 'p_domo_25')}
                 className="touch-pos-btn select-none group relative bg-gradient-to-b from-amber-50 to-orange-100 hover:from-amber-100 active:from-orange-200 border-2 border-amber-400 hover:border-amber-600 rounded-xl px-1.5 py-1 flex items-center justify-between transition-all duration-75 active:scale-95 shadow-2xs h-[42px] sm:h-[46px] cursor-pointer"
                 title="Charola / Domo para empaque"
@@ -4205,6 +4187,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         onAddItemsToTicket={handleAddVoiceItems}
         onRemoveItemFromTicket={handleRemoveVoiceItemFromTicket}
         currentTicketCount={ticketItems.length}
+        currentTicketTotal={total}
         onListeningStateChange={(listening) => {
           setIsVoiceListening(listening);
           window.dispatchEvent(new CustomEvent('voice-assistant-listening-change', { detail: { listening } }));

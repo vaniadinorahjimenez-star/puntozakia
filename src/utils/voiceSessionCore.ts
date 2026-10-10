@@ -78,8 +78,11 @@ export function parseLocalCommand(text: string) {
   }
   working = working.replace(postreRegex, ' ');
 
-  // 2. Acompañamientos y lácteos
+  // 2. Acompañamientos y panadería específica
   const fixedList = [
+    { name: 'Bolillo ($5)', price: 5.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:bolillos?|teleras?|pan\s+blanco)\b/g },
+    { name: 'Pan Tradicional ($12)', price: 12.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:dulces?\s+)?tradicional(?:es)?\b/g },
+    { name: 'Pan Relleno ($18)', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?rellenos?\b/g },
     { name: 'Lechita', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?lechitas?\b/g },
     { name: 'Leche', price: 35.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?leches?\b/g },
     { name: 'Nata', price: 90.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?natas?\b/g },

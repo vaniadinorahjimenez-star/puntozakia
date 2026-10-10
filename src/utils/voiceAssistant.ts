@@ -121,8 +121,8 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   // Detect 'cuenta' command
   const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(norm);
 
-  // Detect card payment command ("cobro con tarjeta", "pago con tarjeta", "cobro tarjeta", "pago tarjeta", "tarjeta")
-  const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|tarjeta)\b/.test(norm);
+  // Detect card payment command ("cobro con tarjeta", "pago con tarjeta", "pagar con tarjeta", "tarjeta", "terminal")
+  const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|pagar\s+tarjeta|con\s+tarjeta|tarjeta|terminal)\b/.test(norm);
 
   // Detect cash received command (e.g., "recibo 500", "recibo 200", "pagan con 500", "me dan 200", "billete de 500", etc.)
   const cashRegex = /\b(?:recibo|recibe|pagan\s+con|paga\s+con|me\s+dan|dan|billete\s+de)\s+(\d+|cincuenta|cien|ciento|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil)\b/g;
@@ -171,19 +171,19 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   // - Lechita -> $18.00, Leche -> $35.00, Nata -> $90.00, Queso -> $150.00, Domo -> $25.00
   const fixedProductsConfig: Array<{ name: string; price: number; regex: RegExp }> = [
     {
-      name: 'Pieza $5',
+      name: 'Bolillo ($5)',
       price: 5.00,
-      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?bolillos?\b/g
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:bolillos?|teleras?|pan\s+blanco)\b/g
     },
     {
-      name: 'Pieza $12',
+      name: 'Pan Tradicional ($12)',
       price: 12.00,
-      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?tradicional(?:es)?\b/g
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:dulces?\s+)?tradicional(?:es)?\b/g
     },
     {
-      name: 'Pieza $18',
+      name: 'Pan Relleno ($18)',
       price: 18.00,
-      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?rellenos?\b/g
+      regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?rellenos?\b/g
     },
     {
       name: 'Lechita',

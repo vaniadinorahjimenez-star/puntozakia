@@ -540,7 +540,7 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                 const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(normTranscript);
 
                 // 3. Detect card payment command
-                const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|tarjeta)\b/.test(normTranscript);
+                const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|pagar\s+tarjeta|con\s+tarjeta|tarjeta|terminal)\b/.test(normTranscript);
 
                 // Deterministic local parser for items in current transcript
                 const parseItemsFromText = (text: string) => {
@@ -590,9 +590,9 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
 
                   // Fixed products including Bolillo ($5), Tradicional ($12), Relleno ($18)
                   const fixedProds = [
-                    { name: 'Pieza $5', price: 5.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?bolillos?\b/g },
-                    { name: 'Pieza $12', price: 12.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?tradicional(?:es)?\b/g },
-                    { name: 'Pieza $18', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:pan(?:es)?\s+)?(?:de\s+)?rellenos?\b/g },
+                    { name: 'Bolillo ($5)', price: 5.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:bolillos?|teleras?|pan\s+blanco)\b/g },
+                    { name: 'Pan Tradicional ($12)', price: 12.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?(?:dulces?\s+)?tradicional(?:es)?\b/g },
+                    { name: 'Pan Relleno ($18)', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+)?(?:de\s+)?(?:pan(?:es)?\s+)?rellenos?\b/g },
                     { name: 'Lechita', price: 18.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?lechitas?\b/g },
                     { name: 'Leche', price: 35.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?leches?\b/g },
                     { name: 'Nata', price: 90.00, regex: /\b(?:(\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?natas?\b/g },

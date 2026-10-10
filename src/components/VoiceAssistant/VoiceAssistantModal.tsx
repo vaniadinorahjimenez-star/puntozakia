@@ -25,6 +25,7 @@ import {
   resetVoiceSession,
   removeVoiceSessionItem,
   speakText,
+  normalizeSpokenText,
   createSpeechRecognitionInstance, 
   isSpeechRecognitionSupported, 
   VoiceCommandResult, 
@@ -38,6 +39,7 @@ interface VoiceAssistantModalProps {
   onAddItemsToTicket: (items: VoiceCommandItem[]) => void;
   onRemoveItemFromTicket?: (concepto: string, precio_unitario: number, quantity: number) => void;
   currentTicketCount?: number;
+  currentTicketTotal?: number;
   onListeningStateChange?: (isListening: boolean) => void;
   onTriggerCheckout?: (total: number) => void;
   onTriggerCardCheckout?: (total: number) => void;
@@ -50,12 +52,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   onAddItemsToTicket,
   onRemoveItemFromTicket,
   currentTicketCount = 0,
+  currentTicketTotal = 0,
   onListeningStateChange,
   onTriggerCheckout,
   onTriggerCardCheckout,
   onCashReceived
 }) => {
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [isCobroActive, setIsCobroActive] = useState<boolean>(false);
   const [activeSessionText, setActiveSessionText] = useState<string>('');
   const [interimText, setInterimText] = useState<string>('');
   const [recentTranscripts, setRecentTranscripts] = useState<Array<{ text: string; itemsCount: number; total: number; time: string }>>([]);
@@ -74,6 +78,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const recognitionRef = useRef<any>(null);
   const shouldKeepListeningRef = useRef<boolean>(false);
   const sessionIdRef = useRef<string>(`session_${Date.now()}`);
+  const interimDebounceTimerRef = useRef<any>(null);
+  const lastProcessedTextRef = useRef<string>('');
+  const lastProcessedTimeRef = useRef<number>(0);
   const speechSupported = isSpeechRecognitionSupported();
 
   // Inform parent component about listening state
@@ -155,152 +162,156 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Process text and generate JSON + optionally add to ticket
-  const processDictation = async (rawText: string, shouldAutoAdd: boolean = autoAddToTicket) => {
-    if (!rawText.trim()) return;
-    setIsProcessing(true);
-    setErrorMessage('');
+  const handleActivateCobro = () => {
+    setIsCobroActive(true);
+    playCashSound();
+    playBeep(880, 'sine', 0.08);
+    speakText("Cobro activo");
+    setSuccessToast("🎙️ Cobro Activo — Dicta productos o cobro");
+    setTimeout(() => setSuccessToast(''), 3000);
+  };
 
-    try {
-      // Call server endpoint with cumulative session management
-      const result = await parseVoiceCommandWithAI(rawText, sessionIdRef.current);
-      setParsedResult(result);
+  const handleCloseAudio = () => {
+    setIsCobroActive(false);
+    stopListening();
+    shouldKeepListeningRef.current = false;
+    onClose();
+  };
 
-      // 1. Check if user spoke a close word (e.g. "cerrar", "terminar", "apagar")
-      if (result.shouldCloseMic) {
-        playBeep(350, 'sawtooth', 0.1);
-        setSuccessToast('Micrófono cerrado por comando de voz');
-        stopListening();
-        setTimeout(() => {
-          setSuccessToast('');
-          onClose();
-        }, 1200);
-        return;
+  // Process text instantly using local deterministic parser (Sub-1ms reaction time)
+  const processDictation = (rawText: string, shouldAutoAdd: boolean = autoAddToTicket) => {
+    const cleanText = rawText.trim();
+    if (!cleanText) return;
+
+    // Prevent duplicate processing of exact same string within 800ms
+    const now = Date.now();
+    if (cleanText === lastProcessedTextRef.current && (now - lastProcessedTimeRef.current) < 800) {
+      return;
+    }
+    lastProcessedTextRef.current = cleanText;
+    lastProcessedTimeRef.current = now;
+
+    const norm = normalizeSpokenText(cleanText);
+
+    // 1. If cobro is not active: ONLY activate when they say "cobrar" or "cobro"
+    // "solo activa el audio cuando diga cobrar, antes no, porque marca mal y de más cualquier palabra que digo"
+    if (!isCobroActive) {
+      if (/\b(cobrar|cobro|iniciar cobro|activar)\b/.test(norm)) {
+        handleActivateCobro();
       }
+      return; // Ignore any other word completely while not in active cobro mode!
+    }
 
-      // Update session accumulated state
-      if (result.items && result.items.length > 0) {
-        setSessionItemsAccumulated(result.items);
-        setSessionTotalAccumulated(result.total);
-      }
+    // 2. Cobro is ACTIVE: Parse locally in <0.1ms with zero network lag!
+    const result = parseVoiceCommandLocally(cleanText);
+    setParsedResult(result);
+
+    // Optional background sync to server session without blocking
+    if (sessionIdRef.current) {
+      parseVoiceCommandWithAI(cleanText, sessionIdRef.current).catch(() => {});
+    }
+
+    // Check if closing/finalizing keywords spoken:
+    // "y cierra el audio cuando diga cobrar"
+    const hasCobrarFinal = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo)\b/.test(norm);
+
+    // Card payment direct to Clip terminal:
+    // "que no mande ticket cuando le diga pagar con tarjeta, que mande directo a cobro a la terminal"
+    if (result.isCardPayment) {
+      playCashSound();
+      playBeep(950, 'sine', 0.1);
+      const finalTotal = (currentTicketTotal && currentTicketTotal > 0)
+        ? currentTicketTotal
+        : (result.total > 0 ? result.total : sessionTotalAccumulated);
 
       const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
-
-      // 2. Check if user spoke "cobro con tarjeta" / "pago con tarjeta" -> Enviar el ticket con tarjeta
-      if (result.isCardPayment) {
-        playCashSound();
-        playBeep(950, 'sine', 0.1);
-        const finalTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
-
-        // If items were also dictated in the same sentence (e.g. "2 bolillos y cobro con tarjeta")
-        if (itemsToAdd.length > 0 && shouldAutoAdd) {
-          onAddItemsToTicket(itemsToAdd);
-        }
-
-        speakText("Cobro con tarjeta, enviando ticket");
-        setSuccessToast(`💳 Cobro con Tarjeta — Enviando ticket... Total: $${finalTotal.toFixed(2)}`);
-        
-        setTimeout(() => {
-          if (onTriggerCardCheckout) {
-            onTriggerCardCheckout(finalTotal);
-          }
-        }, 120);
-
-        setTimeout(() => setSuccessToast(''), 4500);
-        return;
+      if (itemsToAdd.length > 0 && shouldAutoAdd) {
+        onAddItemsToTicket(itemsToAdd);
       }
 
-      // 3. Check if user spoke "recibo 500", "recibo 200", etc. -> Decir cuánto cambio dar
-      if (result.cashReceived !== undefined) {
-        const cash = result.cashReceived;
-        const currentTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
-        const change = Math.round((cash - currentTotal) * 100) / 100;
+      speakText("Cobro con tarjeta, abriendo terminal");
+      setSuccessToast(`💳 Enviando cobro directo a la terminal Clip... Total: $${finalTotal.toFixed(2)}`);
 
-        if (itemsToAdd.length > 0 && shouldAutoAdd) {
-          onAddItemsToTicket(itemsToAdd);
-        }
+      setTimeout(() => {
+        onTriggerCardCheckout?.(finalTotal);
+      }, 100);
 
-        if (onCashReceived) {
-          onCashReceived(cash, change);
-        }
+      // Cierra el audio al mandar a terminal
+      setTimeout(() => {
+        handleCloseAudio();
+      }, 700);
+      return;
+    }
 
-        if (change >= 0) {
-          const speechMsg = change === 0 ? "Pago exacto, sin cambio" : `El cambio es de ${change} pesos`;
-          speakText(speechMsg);
-          setSuccessToast(`💵 Recibido: $${cash}.00 | 🪙 Cambio: $${change}.00`);
-        } else {
-          const shortage = Math.abs(change);
-          const speechMsg = `Faltan ${shortage} pesos para completar la cuenta`;
-          speakText(speechMsg);
-          setSuccessToast(`⚠️ Recibido: $${cash}.00 | Faltan: $${shortage}.00`);
-        }
+    // Cash received & change calculation:
+    // "y si dice recibo 500, o 200, etc, le diga cuanto cambio dar"
+    if (result.cashReceived !== undefined) {
+      const cash = result.cashReceived;
+      const effectiveTotal = (currentTicketTotal && currentTicketTotal > 0)
+        ? currentTicketTotal
+        : (result.total > 0 ? result.total : sessionTotalAccumulated);
+      const change = Math.round((cash - effectiveTotal) * 100) / 100;
 
-        setTimeout(() => setSuccessToast(''), 6000);
-        return;
+      const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
+      if (itemsToAdd.length > 0 && shouldAutoAdd) {
+        onAddItemsToTicket(itemsToAdd);
       }
 
-      // 4. Check if user gave the "cuenta" command to send final total to POS
-      if (result.isFinalCheckout) {
-        playCashSound();
-        playBeep(950, 'sine', 0.1);
-        const finalTotal = result.total > 0 ? result.total : sessionTotalAccumulated;
+      onCashReceived?.(cash, change);
 
-        // If there were also items dictated in the same sentence (e.g. "cuenta 2 de 5")
-        if (itemsToAdd.length > 0 && shouldAutoAdd) {
-          onAddItemsToTicket(itemsToAdd);
-        }
-
-        setSuccessToast(`¡Cuenta enviada al POS! Total: $${finalTotal.toFixed(2)}`);
-        if (onTriggerCheckout) {
-          onTriggerCheckout(finalTotal);
-        }
-        setTimeout(() => setSuccessToast(''), 4000);
-
-        // Keep mic active as requested ("manteniendo el reconocimiento activo hasta que se diga una palabra de cierre")
-        return;
-      }
-
-      // 5. Normal items dictation
-      if (itemsToAdd.length === 0) {
-        setErrorMessage(`No se identificó producto en: "${rawText}". Di: "2 de 5", "más 3 de 10", "cuenta" o "cerrar".`);
-        playBeep(350, 'sawtooth', 0.12);
+      if (change >= 0) {
+        const speechMsg = change === 0 ? "Pago exacto, sin cambio" : `El cambio es de ${change} pesos`;
+        speakText(speechMsg);
+        setSuccessToast(`💵 Recibido: $${cash}.00 | 🪙 Cambio: $${change}.00`);
       } else {
-        playBeep(880, 'sine', 0.08);
-
-        // Record history
-        const now = new Date();
-        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-        setRecentTranscripts(prev => [
-          { text: rawText, itemsCount: itemsToAdd.length, total: result.total, time: timeStr },
-          ...prev.slice(0, 9)
-        ]);
-
-        if (shouldAutoAdd) {
-          onAddItemsToTicket(itemsToAdd);
-          playCashSound();
-          setSuccessToast(`+${itemsToAdd.length} añadidos al ticket ($${itemsToAdd.reduce((a, b) => a + b.subtotal, 0).toFixed(2)})`);
-          setTimeout(() => setSuccessToast(''), 3000);
-        }
-      }
-    } catch (err: any) {
-      console.error('Error processing voice:', err);
-      const fallback = parseVoiceCommandLocally(rawText);
-      setParsedResult(fallback);
-
-      if (fallback.shouldCloseMic) {
-        stopListening();
-        onClose();
-        return;
+        const shortage = Math.abs(change);
+        speakText(`Faltan ${shortage} pesos`);
+        setSuccessToast(`⚠️ Recibido: $${cash}.00 | Faltan: $${shortage}.00`);
       }
 
-      if (fallback.items.length > 0 && shouldAutoAdd) {
-        onAddItemsToTicket(fallback.items);
-        playCashSound();
-        setSuccessToast(`+${fallback.items.length} sumados ($${fallback.total.toFixed(2)})`);
-        setTimeout(() => setSuccessToast(''), 3000);
+      setTimeout(() => setSuccessToast(''), 5000);
+      return;
+    }
+
+    // Normal items dictation (Bolillo $5, Tradicional $12, Relleno $18, etc.)
+    const itemsToAdd = (result.newItems && result.newItems.length > 0) ? result.newItems : result.items;
+    if (itemsToAdd.length > 0) {
+      playCashSound();
+      playBeep(880, 'sine', 0.06);
+
+      const updatedAccumulated = [...sessionItemsAccumulated, ...itemsToAdd];
+      const newTotal = Math.round(updatedAccumulated.reduce((a, b) => a + b.subtotal, 0) * 100) / 100;
+      setSessionItemsAccumulated(updatedAccumulated);
+      setSessionTotalAccumulated(newTotal);
+
+      if (shouldAutoAdd) {
+        onAddItemsToTicket(itemsToAdd);
+        setSuccessToast(`+${itemsToAdd.length} añadido(s) ($${itemsToAdd.reduce((a, b) => a + b.subtotal, 0).toFixed(2)})`);
+        setTimeout(() => setSuccessToast(''), 2500);
       }
-    } finally {
-      setIsProcessing(false);
+
+      const nowD = new Date();
+      const timeStr = `${nowD.getHours().toString().padStart(2, '0')}:${nowD.getMinutes().toString().padStart(2, '0')}:${nowD.getSeconds().toString().padStart(2, '0')}`;
+      setRecentTranscripts(prev => [
+        { text: rawText, itemsCount: itemsToAdd.length, total: result.total, time: timeStr },
+        ...prev.slice(0, 9)
+      ]);
+    }
+
+    // If "cobrar" or "cuenta" spoken to finalize:
+    // "y cierra el audio cuando diga cobrar"
+    if (hasCobrarFinal && (itemsToAdd.length === 0 || norm.includes('cobrar') || norm.includes('cuenta'))) {
+      const finalTotal = (currentTicketTotal && currentTicketTotal > 0)
+        ? currentTicketTotal
+        : (result.total > 0 ? result.total : sessionTotalAccumulated);
+
+      playCashSound();
+      playBeep(950, 'sine', 0.1);
+      setSuccessToast(`¡Cobro completado! Total: $${finalTotal.toFixed(2)}`);
+      onTriggerCheckout?.(finalTotal);
+      speakText("Cobro listo");
+
+      handleCloseAudio();
     }
   };
 
@@ -346,13 +357,48 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           }
         }
 
-        if (newlyFinalizedChunk.trim()) {
-          const cleanChunk = newlyFinalizedChunk.trim();
-          setActiveSessionText(cleanChunk);
+        const cleanFinal = newlyFinalizedChunk.trim();
+        const cleanInterim = interim.trim();
+
+        if (cleanFinal) {
+          if (interimDebounceTimerRef.current) {
+            clearTimeout(interimDebounceTimerRef.current);
+            interimDebounceTimerRef.current = null;
+          }
+          setActiveSessionText(cleanFinal);
           setInterimText('');
-          processDictation(cleanChunk);
-        } else {
-          setInterimText(interim);
+          processDictation(cleanFinal);
+        } else if (cleanInterim) {
+          setInterimText(cleanInterim);
+          setActiveSessionText(cleanInterim);
+
+          const normInterim = normalizeSpokenText(cleanInterim);
+
+          // Fast-path immediate detection for wake word "cobrar"
+          if (!isCobroActive && /\b(cobrar|cobro|iniciar cobro)\b/.test(normInterim)) {
+            handleActivateCobro();
+            setInterimText('');
+            return;
+          }
+
+          // Fast-path immediate detection for card payment
+          if (isCobroActive && /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|terminal)\b/.test(normInterim)) {
+            if (interimDebounceTimerRef.current) clearTimeout(interimDebounceTimerRef.current);
+            processDictation(cleanInterim);
+            setInterimText('');
+            return;
+          }
+
+          // Ultra-fast streaming debounce (180ms) for real-time dictation reaction!
+          if (isCobroActive) {
+            if (interimDebounceTimerRef.current) clearTimeout(interimDebounceTimerRef.current);
+            interimDebounceTimerRef.current = setTimeout(() => {
+              if (cleanInterim && shouldKeepListeningRef.current) {
+                processDictation(cleanInterim);
+                setInterimText('');
+              }
+            }, 180);
+          }
         }
       };
 
@@ -375,7 +421,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           try {
             recognition.start();
           } catch {
-            // Wait briefly and retry if browser is resetting
             setTimeout(() => {
               if (shouldKeepListeningRef.current && isOpen) {
                 try { recognition.start(); } catch {}
@@ -656,45 +701,44 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       {/* Main Body (Super Compacto y Despejado) */}
       <div className="p-2.5 space-y-2 overflow-y-auto max-h-[calc(82vh-55px)] text-xs">
 
-        {/* Indicador de Estado y Onda Sonora */}
+        {/* Indicador de Estado y Modo Cobro */}
         <div className={`p-2 rounded-xl border transition-all ${
-          isListening 
-            ? 'bg-red-50/90 border-red-300 shadow-2xs' 
-            : isProcessing
-              ? 'bg-amber-50/90 border-amber-300'
-              : 'bg-slate-50 border-slate-200'
+          isCobroActive
+            ? 'bg-emerald-50/95 border-emerald-400 shadow-sm ring-1 ring-emerald-400/40' 
+            : 'bg-amber-50/90 border-amber-300 shadow-2xs'
         }`}>
           <div className="flex items-center justify-between gap-1.5">
             
             <div className="flex items-center gap-2">
-              {isListening ? (
+              {isCobroActive ? (
                 <>
                   <div className="relative flex items-center justify-center">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping absolute"></span>
-                    <span className="w-2 rounded-full bg-red-600 relative h-2"></span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping absolute"></span>
+                    <span className="w-2 rounded-full bg-emerald-600 relative h-2"></span>
                   </div>
                   <div>
-                    <span className="text-[11px] font-black text-red-700 block leading-none">
-                      MICRO CONTINUO ACTIVO
+                    <span className="text-[11px] font-black text-emerald-800 block leading-none">
+                      🎙️ COBRO ACTIVO — DICTA LIBREMENTE
                     </span>
-                    <span className="text-[9px] text-slate-500 font-medium">
-                      Di "MÁS" para sumar, "cuenta" o "cerrar"
+                    <span className="text-[9px] text-emerald-700 font-medium">
+                      Di "COBRAR" para finalizar la cuenta y cerrar el audio
                     </span>
                   </div>
-                </>
-              ) : isProcessing ? (
-                <>
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-spin"></span>
-                  <span className="text-[11px] font-black text-amber-800">
-                    Procesando voz...
-                  </span>
                 </>
               ) : (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                  <span className="text-[11px] font-bold text-slate-600">
-                    Micrófono pausado
-                  </span>
+                  <div className="relative flex items-center justify-center">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse absolute"></span>
+                    <span className="w-2 rounded-full bg-amber-500 relative h-2"></span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-black text-amber-900 block leading-none">
+                      💤 EN ESPERA — Di "COBRAR" para activar
+                    </span>
+                    <span className="text-[9px] text-amber-700 font-medium">
+                      Audio inactivo para no marcar palabras accidentales
+                    </span>
+                  </div>
                 </>
               )}
             </div>
@@ -702,13 +746,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             {/* Visualizer Sound Wave */}
             <div className="flex items-end gap-1 h-5 px-1.5 py-0.5 bg-slate-950 rounded-md">
               {isListening ? (
-                <>
-                  <span className="w-1 bg-red-400 rounded-full animate-voice-wave-1"></span>
-                  <span className="w-1 bg-amber-400 rounded-full animate-voice-wave-2"></span>
-                  <span className="w-1 bg-emerald-400 rounded-full animate-voice-wave-3"></span>
-                  <span className="w-1 bg-yellow-400 rounded-full animate-voice-wave-4"></span>
-                  <span className="w-1 bg-rose-400 rounded-full animate-voice-wave-5"></span>
-                </>
+                isCobroActive ? (
+                  <>
+                    <span className="w-1 bg-emerald-400 rounded-full animate-voice-wave-1"></span>
+                    <span className="w-1 bg-teal-400 rounded-full animate-voice-wave-2"></span>
+                    <span className="w-1 bg-emerald-300 rounded-full animate-voice-wave-3"></span>
+                    <span className="w-1 bg-green-400 rounded-full animate-voice-wave-4"></span>
+                    <span className="w-1 bg-emerald-500 rounded-full animate-voice-wave-5"></span>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-1 bg-amber-400 rounded-full animate-voice-wave-2"></span>
+                    <span className="w-1 bg-amber-400 rounded-full animate-voice-wave-3"></span>
+                    <span className="w-1 bg-amber-400 rounded-full animate-voice-wave-4"></span>
+                  </>
+                )
               ) : (
                 <>
                   <span className="w-1 bg-slate-700 rounded-full h-1"></span>
@@ -718,28 +770,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               )}
             </div>
 
-            {/* Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleListening}
-              className={`px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-2xs ${
-                isListening
-                  ? 'bg-red-600 hover:bg-red-700 text-white'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-              }`}
-            >
-              {isListening ? (
-                <>
-                  <MicOff className="w-3 h-3" />
-                  <span>Pausar</span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-3 h-3" />
-                  <span>Encender</span>
-                </>
-              )}
-            </button>
+            {/* Cobro / Audio Action Button */}
+            {isCobroActive ? (
+              <button
+                type="button"
+                onClick={handleCloseAudio}
+                className="px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-2xs bg-rose-600 hover:bg-rose-700 text-white shrink-0"
+                title="Cerrar audio y finalizar"
+              >
+                <MicOff className="w-3 h-3" />
+                <span>Cerrar Audio</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleActivateCobro}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-2xs bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+                title="Activar cobro por voz"
+              >
+                <Mic className="w-3 h-3" />
+                <span>Activar Cobro</span>
+              </button>
+            )}
           </div>
 
           {/* Feedback de lo que se escuchó */}
