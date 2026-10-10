@@ -493,49 +493,18 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   // Points that will be earned in this purchase ($20 pesos = 1 point)
   const pointsEarned = Math.floor(total / (settings.loyaltyPointsPerPesos || 20));
 
-  // Evitar doble registro en pantallas táctiles por disparos combinados (pointerdown + click retrasado)
-  const lastPricePointerTimeRef = useRef<number>(0);
+  // Registro ultra-rápido de precios al ticket (sin bloqueos ni retrasos)
+  const lastAddPriceTimeRef = useRef<number>(0);
 
-  const triggerAddPriceTouch = (price: number, name?: string, productId?: string) => {
-    const now = Date.now();
-    if (now - lastPricePointerTimeRef.current < 350) {
-      return;
-    }
-    lastPricePointerTimeRef.current = now;
-    handleAddPrice(price, name, productId);
-  };
-
-  const handlePointerDownPrice = (
-    e: React.PointerEvent,
-    price: number,
-    name?: string,
-    productId?: string
-  ) => {
-    // Si es mouse tradicional, responder únicamente al botón izquierdo (0)
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    triggerAddPriceTouch(price, name, productId);
-  };
-
-  const lastMultiplierPointerTimeRef = useRef<number>(0);
-  const handlePointerDownMultiplier = (e: React.PointerEvent, num: number) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const now = Date.now();
-    if (now - lastMultiplierPointerTimeRef.current < 250) return;
-    lastMultiplierPointerTimeRef.current = now;
-    playBeep(500 + num * 30, 'sine', 0.04);
-    setSelectedMultiplier(num);
-    setCustomMultiplierInput('');
-  };
-
-  // Add item with current multiplier
+  // Add item with current multiplier instantly
   const handleAddPrice = (price: number, name?: string, productId?: string) => {
     const now = Date.now();
-    if (now - lastPricePointerTimeRef.current < 300) {
-      // Evitar doble disparo de eventos sintéticos subsecuentes
+    // Protección mínima contra rebote accidental de hardware (40ms), garantizando respuesta instantánea
+    if (now - lastAddPriceTimeRef.current < 40) {
       return;
     }
-    lastPricePointerTimeRef.current = now;
-    playBeep(700, 'sine', 0.06);
+    lastAddPriceTimeRef.current = now;
+    playBeep(700, 'sine', 0.04);
     const qty = selectedMultiplier > 0 ? selectedMultiplier : 1;
     const itemName = name || (price === 5 ? 'Bolillo ($5)' : price === 8 ? 'Bolillo / Telera ($8)' : price === 10 ? 'Pan Dulce Tradicional ($10)' : price === 12 ? 'Pan Tradicional ($12)' : price === 18 ? 'Pan Relleno ($18)' : price === 20 ? 'Oreja / Empanada ($20)' : price === 25 ? 'Panqué Nuez/Elote ($25)' : price === 35 ? 'Baguette Rústica ($35)' : price === 90 ? 'Rosca Mediana ($90)' : price === 100 ? 'Pastel / Tarta ($100)' : price === 150 ? 'Pastel Grande 3 Leches ($150)' : `Pan de $${price}`);
 
@@ -570,6 +539,10 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     // Reset multiplier to 1 for next pick
     setSelectedMultiplier(1);
     setCustomMultiplierInput('');
+  };
+
+  const triggerAddPriceTouch = (price: number, name?: string, productId?: string) => {
+    handleAddPrice(price, name, productId);
   };
 
   // Add items interpreted by Voice Assistant Punto Zákia

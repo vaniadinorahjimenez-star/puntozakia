@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { 
   parseVoiceCommandLocally, 
-  parseVoiceCommandWithAI, 
   resetVoiceSession,
   removeVoiceSessionItem,
   speakText,
@@ -205,11 +204,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     // 2. Cobro is ACTIVE: Parse locally in <0.1ms with zero network lag!
     const result = parseVoiceCommandLocally(cleanText);
     setParsedResult(result);
-
-    // Optional background sync to server session without blocking
-    if (sessionIdRef.current) {
-      parseVoiceCommandWithAI(cleanText, sessionIdRef.current).catch(() => {});
-    }
 
     // Check if closing/finalizing keywords spoken:
     // "y cierra el audio cuando diga cobrar"
