@@ -40,8 +40,8 @@ interface VoiceAssistantModalProps {
   currentTicketCount?: number;
   currentTicketTotal?: number;
   onListeningStateChange?: (isListening: boolean) => void;
-  onTriggerCheckout?: (total: number, items?: VoiceCommandItem[], withoutTicket?: boolean) => void;
-  onTriggerCardCheckout?: (total: number, items?: VoiceCommandItem[], withoutTicket?: boolean) => void;
+  onTriggerCheckout?: (total: number) => void;
+  onTriggerCardCheckout?: (total: number) => void;
   onCashReceived?: (cash: number, change: number) => void;
 }
 
@@ -130,9 +130,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     '2 bolillos',
     'más 2 tradicionales',
     'más 1 relleno',
-    'cobrar sin ticket',
     'recibo 200',
-    'cobro con tarjeta'
+    'cobro con tarjeta',
+    'cuenta'
   ];
 
   // Stop listening helper
@@ -231,20 +231,26 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     lastProcessedTimeRef.current = now;
 
     const norm = normalizeSpokenText(cleanText);
-    const result = parseVoiceCommandLocally(cleanText);
-    setParsedResult(result);
 
     const wasActiveInitially = isCobroActiveRef.current;
-    const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro|cuenta|la cuenta|sin ticket|cobrar sin ticket)\b/.test(norm);
+    const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro)\b/.test(norm);
 
-    // 1. If cobro is not active yet: activate when they speak cobro wake words OR dictate bakery items
+    // 1. If cobro is not active yet: ONLY activate when they say "cobrar" or "cobro"
+    // "solo activa el audio cuando diga cobrar, antes no, porque marca mal y de más cualquier palabra que digo"
     if (!wasActiveInitially) {
-      if (!containsCobroWakeWord && result.items.length === 0 && !result.isCardPayment && !result.isWithoutTicket) {
-        // Ignore general background chatter that has no bakery products nor cobro commands
+      if (!containsCobroWakeWord) {
+        // Ignore any background chatter while not in active cobro mode!
         return;
       }
+      // "cobrar" spoken! Activate cobro mode now!
       handleActivateCobro();
+      // Notice: If the utterance ALSO contains items (e.g. "cobrar 3 bolillos", "cobrar 3 de 5"),
+      // we must NOT return — continue below to parse and mark those items on the ticket!
     }
+
+    // 2. Cobro is ACTIVE: Parse locally in <0.1ms with zero network lag!
+    const result = parseVoiceCommandLocally(cleanText);
+    setParsedResult(result);
 
     // 3. Card payment direct to Clip terminal:
     // "que no mande ticket cuando le diga pagar con tarjeta, que mande directo a cobro a la terminal"
@@ -262,9 +268,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         : (result.total > 0 ? result.total : sessionTotalAccumulated);
 
       speakText("Cobro con tarjeta, abriendo terminal");
-      const allSessionItems = [...sessionItemsAccumulated, ...itemsToAdd];
+      setSuccessToast(`💳 Enviando cobro directo a la terminal Clip... Total: $${effectiveTotal.toFixed(2)}`);
+
       setTimeout(() => {
-        onTriggerCardCheckoutRef.current?.(effectiveTotal, allSessionItems, true);
+        onTriggerCardCheckoutRef.current?.(effectiveTotal);
       }, 100);
 
       // Cierra el audio al mandar a terminal
@@ -331,13 +338,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
     // 6. Check if closing/finalizing keywords spoken:
     // "y cierra el audio cuando diga cobrar"
-    const isWithoutTicket = result.isWithoutTicket || /\b(sin ticket|sin comprobante|sin papel|no ticket)\b/.test(norm);
-    const hasClosingWord = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo|sin ticket)\b/.test(norm);
-    const isPureCheckoutCommand = /\b(cobrar|cobro|cierre|cuenta|la cuenta|terminar|finalizar|sin ticket|cobrar sin ticket)\b/.test(norm) && itemsToAdd.length === 0;
-
-    if ((wasActiveInitially && hasClosingWord) || isWithoutTicket || isPureCheckoutCommand) {
+    // CRITICAL: Only close if cobro was ALREADY active when this utterance began (wasActiveInitially === true)!
+    // This allows "cobrar 3 de 5" to activate and add the items without prematurely closing.
+    const hasClosingWord = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo)\b/.test(norm);
+    if (wasActiveInitially && hasClosingWord) {
       const addedSubtotal = itemsToAdd.reduce((a, b) => a + b.subtotal, 0);
-      const finalItems = [...sessionItemsAccumulated, ...itemsToAdd];
       const finalTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
         ? (currentTicketTotalRef.current + (shouldAutoAdd ? 0 : addedSubtotal))
         : (result.total > 0 ? result.total : (sessionTotalAccumulated + addedSubtotal));
@@ -345,12 +350,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       playCashSound();
       playBeep(950, 'sine', 0.1);
       setSuccessToast(`¡Cobro completado! Total: $${finalTotal.toFixed(2)}`);
-      
-      onTriggerCheckoutRef.current?.(finalTotal, finalItems, isWithoutTicket);
+      onTriggerCheckoutRef.current?.(finalTotal);
       speakText("Cobro listo");
 
       handleCloseAudio();
-      return;
     }
   };
 
@@ -496,8 +499,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   // Auto-start listening as soon as modal opens, and stop on close
   useEffect(() => {
     if (isOpen) {
-      isCobroActiveRef.current = true;
-      setIsCobroActive(true);
       shouldKeepListeningRef.current = true;
       const timer = setTimeout(() => {
         startListening();
@@ -882,40 +883,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                const effectiveTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
-                  ? currentTicketTotalRef.current
-                  : sessionTotalAccumulated;
-                if (effectiveTotal > 0 && onTriggerCheckoutRef.current) {
+                if (sessionTotalAccumulated > 0 && onTriggerCheckout) {
                   playCashSound();
-                  onTriggerCheckoutRef.current(effectiveTotal, sessionItemsAccumulated, true);
-                  setSuccessToast(`¡Cobro completado! Total: $${effectiveTotal.toFixed(2)}`);
+                  onTriggerCheckout(sessionTotalAccumulated);
+                  setSuccessToast(`¡Cuenta enviada! Total: $${sessionTotalAccumulated.toFixed(2)}`);
                   setTimeout(() => setSuccessToast(''), 3000);
-                  handleCloseAudio();
                 }
               }}
-              className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-[10px] px-2 py-1 rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1 active:scale-95"
-              title="Cobrar sin imprimir ticket"
+              className="bg-white/20 hover:bg-white/30 text-white font-black text-[10px] px-2 py-1 rounded-lg transition-colors cursor-pointer"
+              title="Enviar cuenta directamente al mostrador"
             >
-              <span>🍩 Sin Ticket</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const effectiveTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
-                  ? currentTicketTotalRef.current
-                  : sessionTotalAccumulated;
-                if (effectiveTotal > 0 && onTriggerCheckoutRef.current) {
-                  playCashSound();
-                  onTriggerCheckoutRef.current(effectiveTotal, sessionItemsAccumulated, false);
-                  setSuccessToast(`¡Ticket térmico e impreso! Total: $${effectiveTotal.toFixed(2)}`);
-                  setTimeout(() => setSuccessToast(''), 3000);
-                  handleCloseAudio();
-                }
-              }}
-              className="bg-white/20 hover:bg-white/30 active:bg-white/40 text-white font-black text-[10px] px-1.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
-              title="Cobrar e imprimir ticket térmico"
-            >
-              <span>🖨️ Con Ticket</span>
+              Cuenta ➔
             </button>
           </div>
         </div>

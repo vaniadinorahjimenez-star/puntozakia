@@ -80,25 +80,16 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
     }));
   });
 
-  const onCloseRef = React.useRef(onClose);
   useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
+    playCelebrationFanfare();
 
-  useEffect(() => {
-    try {
-      playCelebrationFanfare();
-    } catch {
-      // ignore
-    }
-
-    // Auto dismiss after 3.2 seconds
+    // Auto dismiss after 2.9 seconds
     const timer = setTimeout(() => {
-      onCloseRef.current();
-    }, 3200);
+      onClose();
+    }, 2900);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [onClose]);
 
   return (
     <div
@@ -110,15 +101,6 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="relative bg-gradient-to-b from-amber-50 via-white to-pink-50 rounded-3xl p-6 sm:p-7 max-w-sm w-full shadow-2xl border-4 border-pink-300 text-center overflow-hidden animate-in zoom-in-90 duration-300"
       >
-        {/* Botón Cerrar (X) */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-3 right-3 w-7 h-7 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-black text-sm cursor-pointer z-30 transition-all active:scale-95"
-          title="Cerrar donita"
-        >
-          ✕
-        </button>
         {/* Floating Confetti / Sparkle Emojis */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {particles.map((p) => (

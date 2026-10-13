@@ -147,11 +147,11 @@ export default function App() {
 
     // 3. Sincronizar entre pestañas abiertas en el mismo dispositivo
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEYS.TICKETS || e.key === 'santafe_tickets' || e.key === 'santafe_tickets_v1') {
+      if (e.key === 'santafe_tickets') {
         setTickets(prev => mergeTickets(prev, loadTickets()));
-      } else if (e.key === STORAGE_KEYS.ORDERS || e.key === 'santafe_orders' || e.key === 'santafe_orders_v1') {
+      } else if (e.key === 'santafe_orders') {
         setOrders(prev => mergeOrders(prev, loadOrders()));
-      } else if (e.key === STORAGE_KEYS.CUSTOMERS || e.key === 'santafe_customers' || e.key === 'santafe_customers_v1') {
+      } else if (e.key === 'santafe_customers') {
         setCustomers(prev => mergeCustomers(prev, loadCustomers()));
       }
     };
@@ -195,9 +195,7 @@ export default function App() {
     // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
     const currentTickets = loadTickets();
     const merged = mergeTickets([newTicket], currentTickets);
-    const serializedTickets = JSON.stringify(merged);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, serializedTickets);
-    localStorage.setItem('santafe_tickets', serializedTickets);
+    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
 
     // 2. Actualizar estado de React functionalmente asegurando que newTicket esté presente
     setTickets(prev => mergeTickets([newTicket], prev));

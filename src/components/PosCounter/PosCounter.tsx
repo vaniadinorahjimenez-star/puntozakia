@@ -99,7 +99,6 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const [activeCardFolio, setActiveCardFolio] = useState<string>('');
   const [zettleDevice, setZettleDevice] = useState<ZettleDeviceInfo | null>(getZettleConnectionInfo());
   const [isConnectingZettlePos, setIsConnectingZettlePos] = useState<boolean>(false);
-  const cardSkipPrintRef = useRef<boolean>(false);
 
   useEffect(() => {
     const unsub = subscribeZettleConnection((info) => {
@@ -873,31 +872,13 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Process & Complete Sale WITHOUT Ticket (Triggers celebratory smiling donut animation)
   const handleQuickCheckoutWithoutTicket = () => {
-    let effectiveItems = ticketItems.length > 0 ? [...ticketItems] : [];
-    let currentTotal = total;
-    let currentPieces = totalPieces;
-
-    if (effectiveItems.length === 0) {
-      const numInput = numericCashGiven > 0 ? numericCashGiven : (parseFloat(cashGivenInput) || 0);
-      if (numInput > 0) {
-        currentTotal = numInput;
-        currentPieces = 1;
-        effectiveItems = [{
-          id: `quick-item-${Date.now()}`,
-          name: `Pieza / Venta Mostrador ($${numInput})`,
-          price: numInput,
-          quantity: 1,
-          total: numInput
-        }];
-      } else {
-        playBeep(400, 'sawtooth', 0.08);
-        return;
-      }
-    }
+    if (ticketItems.length === 0) return;
 
     playCashSound();
 
     const folio = getNextTicketFolio(tickets);
+    const currentTotal = total;
+    const currentPieces = totalPieces;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
     const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
@@ -1038,143 +1019,15 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
     setShowZettleModal(false);
 
-    if (cardSkipPrintRef.current) {
-      cardSkipPrintRef.current = false;
-      setCelebrationData({
-        total,
-        folio,
-        piecesCount: totalPieces,
-        customerName: custIdentifier
-      });
-    } else {
-      // Mandar directo a impresión térmica sin abrir modal secundario
-      setDirectPrintTicket(newTicket);
-      setPrintToastNotice(`🖨️ Imprimiendo Ticket Tarjeta #${folio} ($${total}.00)...`);
-      setTimeout(() => {
-        setPrintToastNotice('');
-      }, 3500);
+    // Mandar directo a impresión térmica sin abrir modal secundario
+    setDirectPrintTicket(newTicket);
+    setPrintToastNotice(`🖨️ Imprimiendo Ticket Tarjeta #${folio} ($${total}.00)...`);
+    setTimeout(() => {
+      setPrintToastNotice('');
+    }, 3500);
 
-      // Ejecutar impresión directa térmica aislada
-      printTicketDirectToPrinter(newTicket, settings);
-    }
-
-    // Reset local counter state for next customer
-    setTicketItems([]);
-    setPointsToRedeem(0);
-    setIsSpecialCustomerDiscount(false);
-    setCashGivenInput('');
-    setPhoneSearch('');
-    setSelectedCustomer(null);
-    setVirtualPhoneInput('');
-    setShowNewCustomerForm(false);
-  };
-
-  // Cobro por voz con registro GARANTIZADO en la base de datos (con o sin ticket)
-  const handleVoiceCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
-    // 1. Obtener los productos a cobrar: de ticketItems o reconstruidos de voiceItems
-    let effectiveItems: TicketItem[] = ticketItems.length > 0 ? [...ticketItems] : [];
-
-    if (effectiveItems.length === 0 && voiceItems && voiceItems.length > 0) {
-      effectiveItems = voiceItems.map((vItem, idx) => ({
-        id: `voice-item-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
-        name: vItem.concepto,
-        price: vItem.precio_unitario,
-        quantity: vItem.cantidad,
-        total: vItem.subtotal
-      }));
-    }
-
-    if (effectiveItems.length === 0) {
-      const fallbackTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : total;
-      if (fallbackTotal > 0) {
-        effectiveItems = [{
-          id: `voice-item-${Date.now()}`,
-          name: `Pieza / Venta Mostrador ($${fallbackTotal})`,
-          price: fallbackTotal,
-          quantity: 1,
-          total: fallbackTotal
-        }];
-      } else {
-        playBeep(400, 'sawtooth', 0.1);
-        return;
-      }
-    }
-
-    playCashSound();
-
-    const folio = getNextTicketFolio(tickets);
-    const effectiveSubtotal = effectiveItems.reduce((acc, it) => acc + it.total, 0);
-    const currentTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : (effectiveSubtotal - totalDiscount);
-    const currentPieces = effectiveItems.reduce((acc, it) => acc + it.quantity, 0);
-
-    const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
-    const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
-    const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
-    const effectiveChange = effectivePaid >= currentTotal ? effectivePaid - currentTotal : 0;
-
-    const newTicket: SaleTicket = {
-      id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      folio,
-      timestamp: new Date().toISOString(),
-      date: getTodayString(),
-      time: getNowTimeString(true),
-      items: effectiveItems,
-      subtotal: effectiveSubtotal,
-      discount: totalDiscount,
-      total: currentTotal,
-      paymentMethod: 'efectivo',
-      amountPaid: effectivePaid,
-      change: effectiveChange,
-      customerName: custIdentifier,
-      customerPhone: cleanPhone || undefined,
-      pointsEarned,
-      pointsRedeemed: actualDiscount,
-      isSpecialDiscount: isSpecialCustomerDiscount,
-      specialDiscount: specialCustomerDiscount,
-      cashier: activeCashier,
-      shift: activeShift
-    };
-
-    let updatedCust: Customer | undefined;
-    if (selectedCustomer) {
-      updatedCust = {
-        ...selectedCustomer,
-        points: selectedCustomer.points - actualDiscount + pointsEarned,
-        totalSpent: selectedCustomer.totalSpent + currentTotal,
-        visitsCount: selectedCustomer.visitsCount + 1,
-        lastVisit: getTodayString()
-      };
-    } else if (cleanPhone.length >= 7) {
-      updatedCust = {
-        id: `cust-${Date.now()}`,
-        name: `Tel: ${cleanPhone}`,
-        phone: cleanPhone,
-        points: pointsEarned,
-        totalSpent: currentTotal,
-        visitsCount: 1,
-        lastVisit: getTodayString()
-      };
-    }
-
-    // REGISTRO OBLIGATORIO E INMEDIATO EN LA BASE DE DATOS Y EN LA NUBE
-    onSaveTicket(newTicket, updatedCust);
-    setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
-
-    if (!withoutTicket) {
-      // Con ticket: impresión térmica
-      setDirectPrintTicket(newTicket);
-      setPrintToastNotice(`🖨️ Imprimiendo Ticket #${folio} ($${currentTotal}.00)...`);
-      setTimeout(() => setPrintToastNotice(''), 3500);
-      printTicketDirectToPrinter(newTicket, settings);
-    } else {
-      // Sin ticket: celebración de dona
-      setCelebrationData({
-        total: currentTotal,
-        folio,
-        piecesCount: currentPieces,
-        customerName: custIdentifier
-      });
-    }
+    // Ejecutar impresión directa térmica aislada
+    printTicketDirectToPrinter(newTicket, settings);
 
     // Reset local counter state for next customer
     setTicketItems([]);
@@ -1188,11 +1041,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   };
 
   // Mandar directo a cobro a la terminal Clip al decir "pagar con tarjeta" / "cobro con tarjeta"
-  const handleVoiceCardCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
-    if (ticketItems.length === 0 && voiceItems && voiceItems.length > 0) {
-      handleAddVoiceItems(voiceItems);
-    }
-    cardSkipPrintRef.current = withoutTicket;
+  const handleVoiceCardCheckout = () => {
+    if (ticketItems.length === 0) return;
     playBeep(750, 'sine', 0.05);
     const f = getNextTicketFolio(tickets);
     setActiveCardFolio(f);
@@ -2417,7 +2267,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <button
                     id="quick-checkout-no-ticket-btn"
                     type="button"
-                    disabled={ticketItems.length === 0 && numericCashGiven <= 0 && !(parseFloat(cashGivenInput) > 0)}
+                    disabled={ticketItems.length === 0}
                     onClick={handleQuickCheckoutWithoutTicket}
                     className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-emerald-500 min-h-[46px]"
                     title="Registrar venta en efectivo sin imprimir ticket (animación de dona sonriente)"
@@ -4318,11 +4168,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
           setIsVoiceListening(listening);
           window.dispatchEvent(new CustomEvent('voice-assistant-listening-change', { detail: { listening } }));
         }}
-        onTriggerCheckout={(t, items, withoutTicket) => {
-          handleVoiceCheckout(t, items, withoutTicket !== false);
+        onTriggerCheckout={(t) => {
+          playCashSound();
         }}
-        onTriggerCardCheckout={(t, items, withoutTicket) => {
-          handleVoiceCardCheckout(t, items, withoutTicket !== false);
+        onTriggerCardCheckout={(t) => {
+          handleVoiceCardCheckout();
         }}
         onCashReceived={(cash, change) => {
           setCashGivenInput(cash.toString());

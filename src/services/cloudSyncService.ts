@@ -193,9 +193,7 @@ export async function syncWithCloud(providedData?: {
           const mergedCustomers = mergeCustomers(freshLocalCustomers, json.data.customers || []);
 
           // Guardar la versión combinada en localStorage local
-          const strTickets = JSON.stringify(mergedTickets);
-          localStorage.setItem(STORAGE_KEYS.TICKETS, strTickets);
-          localStorage.setItem('santafe_tickets', strTickets);
+          localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
           localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
           localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
           localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
@@ -280,9 +278,7 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
         const mergedOutflows = mergeOutflows(localOutflows, json.data.outflows || []);
         const mergedCustomers = mergeCustomers(localCustomers, json.data.customers || []);
 
-        const strTickets = JSON.stringify(mergedTickets);
-        localStorage.setItem(STORAGE_KEYS.TICKETS, strTickets);
-        localStorage.setItem('santafe_tickets', strTickets);
+        localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
         localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
         localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
         localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
