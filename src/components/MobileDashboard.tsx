@@ -45,6 +45,7 @@ import {
 } from '../utils/storage';
 import { playCashSound, playBeep } from '../utils/audio';
 import { ThermalTicket } from './ThermalTicket';
+import { HeartBreadCelebration } from './HeartBreadCelebration';
 import { CashShiftCutModal } from './ShiftCut/CashShiftCutModal';
 import { VoiceAssistantModal } from './VoiceAssistant/VoiceAssistantModal';
 import { VoiceCommandItem } from '../utils/voiceAssistant';
@@ -105,6 +106,12 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   const [showVoiceAssistantModal, setShowVoiceAssistantModal] = useState<boolean>(false);
   const [isMobileVoiceListening, setIsMobileVoiceListening] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<string>('');
+  const [celebrationData, setCelebrationData] = useState<{
+    total: number;
+    folio: string;
+    piecesCount: number;
+    customerName?: string;
+  } | null>(null);
 
   const handleAddVoiceItems = (voiceItems: VoiceCommandItem[]) => {
     if (!voiceItems || voiceItems.length === 0) return;
@@ -221,12 +228,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
   // Checkout Actions
   const handleCheckout = (paymentMethod: 'efectivo' | 'tarjeta', showReceipt = false) => {
-    if (ticketItems.length === 0) {
-      playBeep(320, 'sawtooth', 0.08);
-      setSuccessToast('⚠️ Primero agrega piezas al ticket antes de cobrar.');
-      setTimeout(() => setSuccessToast(''), 3000);
-      return;
-    }
+    if (ticketItems.length === 0) return;
     playCashSound();
 
     const nextFolio = getNextTicketFolio(tickets);
@@ -575,10 +577,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
+              disabled={ticketItems.length === 0}
               onClick={() => handleCheckout('efectivo', false)}
-              className={`h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-emerald-500 ${
-                ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-emerald-400/50'
-              }`}
+              className="h-14 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-emerald-500"
             >
               <Banknote className="w-4 h-4" />
               <span>Efectivo 💵</span>
@@ -586,10 +587,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
             <button
               type="button"
+              disabled={ticketItems.length === 0}
               onClick={() => handleCheckout('tarjeta', false)}
-              className={`h-14 bg-sky-600 hover:bg-sky-700 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-sky-500 ${
-                ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-sky-400/50'
-              }`}
+              className="h-14 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-sky-500"
             >
               <CreditCard className="w-4 h-4" />
               <span>Tarjeta 💳</span>
@@ -597,10 +597,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
             <button
               type="button"
+              disabled={ticketItems.length === 0}
               onClick={() => handleCheckout('efectivo', true)}
-              className={`h-14 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-slate-800 ${
-                ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-amber-400/50'
-              }`}
+              className="h-14 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-0.5 shadow-sm active:scale-95 transition-all cursor-pointer border border-slate-800"
             >
               <Printer className="w-4 h-4 text-amber-400" />
               <span>Con Ticket 🧾</span>

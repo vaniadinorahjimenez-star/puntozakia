@@ -233,7 +233,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     const norm = normalizeSpokenText(cleanText);
 
     const wasActiveInitially = isCobroActiveRef.current;
-    const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro)\b/.test(norm);
+    const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro|cuenta|la cuenta|sin ticket|cobrar sin ticket)\b/.test(norm);
 
     // 1. If cobro is not active yet: ONLY activate when they say "cobrar" or "cobro"
     // "solo activa el audio cuando diga cobrar, antes no, porque marca mal y de más cualquier palabra que digo"
@@ -337,11 +337,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
     // 6. Check if closing/finalizing keywords spoken:
     // "y cierra el audio cuando diga cobrar"
-    // CRITICAL: Only close if cobro was ALREADY active when this utterance began (wasActiveInitially === true)!
-    // This allows "cobrar 3 de 5" to activate and add the items without prematurely closing.
+    const isWithoutTicket = result.isWithoutTicket || /\b(sin ticket|sin comprobante|sin papel|no ticket)\b/.test(norm);
     const hasClosingWord = /\b(cobrar|cobro|cierre|cuenta|la cuenta|cerrar|terminar|finalizar|listo|sin ticket)\b/.test(norm);
-    if (wasActiveInitially && hasClosingWord) {
-      const isWithoutTicket = result.isWithoutTicket || /\b(sin ticket|sin comprobante|sin papel|no ticket)\b/.test(norm);
+    const isPureCheckoutCommand = /\b(cobrar|cobro|cierre|cuenta|la cuenta|terminar|finalizar|sin ticket|cobrar sin ticket)\b/.test(norm) && itemsToAdd.length === 0;
+
+    if ((wasActiveInitially && hasClosingWord) || isWithoutTicket || isPureCheckoutCommand) {
       const addedSubtotal = itemsToAdd.reduce((a, b) => a + b.subtotal, 0);
       const finalItems = [...sessionItemsAccumulated, ...itemsToAdd];
       const finalTotal = (currentTicketTotalRef.current && currentTicketTotalRef.current > 0)
@@ -356,6 +356,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speakText("Cobro listo");
 
       handleCloseAudio();
+      return;
     }
   };
 
