@@ -99,6 +99,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const [activeCardFolio, setActiveCardFolio] = useState<string>('');
   const [zettleDevice, setZettleDevice] = useState<ZettleDeviceInfo | null>(getZettleConnectionInfo());
   const [isConnectingZettlePos, setIsConnectingZettlePos] = useState<boolean>(false);
+  const cardSkipPrintRef = useRef<boolean>(false);
 
   useEffect(() => {
     const unsub = subscribeZettleConnection((info) => {
@@ -789,26 +790,17 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     handleRegisterOrSelectPhone(phoneSearch);
   };
 
-  // Process & Complete Sale with Direct Print & Visual Receipt Modal
-  const handleCompleteSale = (customItems?: TicketItem[]) => {
-    const itemsToProcess = (customItems && customItems.length > 0) ? customItems : ticketItems;
-    if (itemsToProcess.length === 0) {
-      playBeep(320, 'sawtooth', 0.08);
-      setPrintToastNotice('⚠️ Primero agrega productos al ticket (ej. pulsa $5, $12 o dicta por voz).');
-      setTimeout(() => setPrintToastNotice(''), 3500);
-      return;
-    }
+  // Process & Complete Sale with Direct Print (Sin abrir ventana secundaria)
+  const handleCompleteSale = () => {
+    if (ticketItems.length === 0) return;
 
     playCashSound();
 
-    const currentSubtotal = itemsToProcess.reduce((acc, it) => acc + it.total, 0);
-    const currentTotal = Math.max(0, currentSubtotal - totalDiscount);
     const folio = getNextTicketFolio(tickets);
-    const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
-    const effectiveChange = effectivePaid >= currentTotal ? effectivePaid - currentTotal : 0;
+    const effectivePaid = numericCashGiven > 0 ? numericCashGiven : total;
+    const effectiveChange = effectivePaid >= total ? effectivePaid - total : 0;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
-    const earnedPts = Math.floor(currentTotal / (settings.loyaltyPointsPerPesos || 20));
 
     const newTicket: SaleTicket = {
       id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -816,16 +808,16 @@ export const PosCounter: React.FC<PosCounterProps> = ({
       timestamp: new Date().toISOString(),
       date: getTodayString(),
       time: getNowTimeString(true),
-      items: [...itemsToProcess],
-      subtotal: currentSubtotal,
+      items: [...ticketItems],
+      subtotal,
       discount: totalDiscount,
-      total: currentTotal,
+      total,
       paymentMethod: 'efectivo',
       amountPaid: effectivePaid,
       change: effectiveChange,
       customerName: custIdentifier,
       customerPhone: cleanPhone || undefined,
-      pointsEarned: earnedPts,
+      pointsEarned,
       pointsRedeemed: actualDiscount,
       isSpecialDiscount: isSpecialCustomerDiscount,
       specialDiscount: specialCustomerDiscount,
@@ -837,8 +829,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     if (selectedCustomer) {
       updatedCust = {
         ...selectedCustomer,
-        points: selectedCustomer.points - actualDiscount + earnedPts,
-        totalSpent: selectedCustomer.totalSpent + currentTotal,
+        points: selectedCustomer.points - actualDiscount + pointsEarned,
+        totalSpent: selectedCustomer.totalSpent + total,
         visitsCount: selectedCustomer.visitsCount + 1,
         lastVisit: getTodayString()
       };
@@ -847,36 +839,28 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         id: `cust-${Date.now()}`,
         name: `Tel: ${cleanPhone}`,
         phone: cleanPhone,
-        points: earnedPts,
-        totalSpent: currentTotal,
+        points: pointsEarned,
+        totalSpent: total,
         visitsCount: 1,
         lastVisit: getTodayString()
       };
     }
 
-    // 1. Guardar de forma inmediata en almacenamiento y sincronización
     onSaveTicket(newTicket, updatedCust);
-
-    // 2. Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo para verificación en mostrador
+    // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
 
-    // 3. Abrir el modal del Ticket Térmico en pantalla para que el usuario SIEMPRE vea el ticket registrado con folio y total
-    setCompletedTicket(newTicket);
-
-    // 4. Mandar a impresión térmica protegida
+    // Mandar DIRECTO a impresión térmica sin ventana secundaria
     setDirectPrintTicket(newTicket);
-    setPrintToastNotice(`✅ Venta #${folio} registrada con ticket ($${currentTotal}.00)`);
+    setPrintToastNotice(`🖨️ Imprimiendo Ticket #${folio} ($${total}.00)...`);
     setTimeout(() => {
       setPrintToastNotice('');
     }, 3500);
 
-    try {
-      printTicketDirectToPrinter(newTicket, settings);
-    } catch (printErr) {
-      console.warn('Error al imprimir directo en impresora:', printErr);
-    }
+    // Ejecutar impresión directa térmica aislada
+    printTicketDirectToPrinter(newTicket, settings);
 
-    // 5. Reset local counter state for next customer
+    // Reset local counter state for next customer
     setTicketItems([]);
     setPointsToRedeem(0);
     setIsSpecialCustomerDiscount(false);
@@ -889,12 +873,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Process & Complete Sale WITHOUT Ticket (Triggers celebratory smiling donut animation)
   const handleQuickCheckoutWithoutTicket = () => {
-    if (ticketItems.length === 0) {
-      playBeep(320, 'sawtooth', 0.08);
-      setPrintToastNotice('⚠️ Primero agrega productos al ticket (ej. pulsa $5, $12 o dicta por voz).');
-      setTimeout(() => setPrintToastNotice(''), 3500);
-      return;
-    }
+    if (ticketItems.length === 0) return;
 
     playCashSound();
 
@@ -980,12 +959,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     last4?: string;
     reference?: string;
   }) => {
-    if (ticketItems.length === 0) {
-      playBeep(320, 'sawtooth', 0.08);
-      setPrintToastNotice('⚠️ Primero agrega productos al ticket antes de cobrar.');
-      setTimeout(() => setPrintToastNotice(''), 3500);
-      return;
-    }
+    if (ticketItems.length === 0) return;
 
     playCashSound();
     const folio = cardDetails.reference || activeCardFolio || getNextTicketFolio(tickets);
@@ -1046,21 +1020,131 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
     setShowZettleModal(false);
 
-    // Abrir modal de ticket térmico en pantalla para confirmar la venta con tarjeta
-    setCompletedTicket(newTicket);
+    if (cardSkipPrintRef.current) {
+      cardSkipPrintRef.current = false;
+      setCelebrationData({
+        total,
+        folio,
+        piecesCount: totalPieces,
+        customerName: custIdentifier
+      });
+    } else {
+      // Mandar directo a impresión térmica sin abrir modal secundario
+      setDirectPrintTicket(newTicket);
+      setPrintToastNotice(`🖨️ Imprimiendo Ticket Tarjeta #${folio} ($${total}.00)...`);
+      setTimeout(() => {
+        setPrintToastNotice('');
+      }, 3500);
 
-    // Mandar directo a impresión térmica
-    setDirectPrintTicket(newTicket);
-    setPrintToastNotice(`🖨️ Ticket Tarjeta #${folio} registrado ($${total}.00)`);
-    setTimeout(() => {
-      setPrintToastNotice('');
-    }, 3500);
-
-    // Ejecutar impresión directa térmica aislada
-    try {
+      // Ejecutar impresión directa térmica aislada
       printTicketDirectToPrinter(newTicket, settings);
-    } catch (printErr) {
-      console.warn('Error imprimiendo ticket de tarjeta:', printErr);
+    }
+
+    // Reset local counter state for next customer
+    setTicketItems([]);
+    setPointsToRedeem(0);
+    setIsSpecialCustomerDiscount(false);
+    setCashGivenInput('');
+    setPhoneSearch('');
+    setSelectedCustomer(null);
+    setVirtualPhoneInput('');
+    setShowNewCustomerForm(false);
+  };
+
+  // Cobro por voz con registro GARANTIZADO en la base de datos (con o sin ticket)
+  const handleVoiceCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
+    // 1. Obtener los productos a cobrar: de ticketItems o reconstruidos de voiceItems
+    let effectiveItems: TicketItem[] = ticketItems.length > 0 ? [...ticketItems] : [];
+
+    if (effectiveItems.length === 0 && voiceItems && voiceItems.length > 0) {
+      effectiveItems = voiceItems.map((vItem, idx) => ({
+        id: `voice-item-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+        name: vItem.concepto,
+        price: vItem.precio_unitario,
+        quantity: vItem.cantidad,
+        total: vItem.subtotal
+      }));
+    }
+
+    if (effectiveItems.length === 0) {
+      playBeep(400, 'sawtooth', 0.1);
+      return;
+    }
+
+    playCashSound();
+
+    const folio = getNextTicketFolio(tickets);
+    const effectiveSubtotal = effectiveItems.reduce((acc, it) => acc + it.total, 0);
+    const currentTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : (effectiveSubtotal - totalDiscount);
+    const currentPieces = effectiveItems.reduce((acc, it) => acc + it.quantity, 0);
+
+    const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
+    const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
+    const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
+    const effectiveChange = effectivePaid >= currentTotal ? effectivePaid - currentTotal : 0;
+
+    const newTicket: SaleTicket = {
+      id: `sale-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      folio,
+      timestamp: new Date().toISOString(),
+      date: getTodayString(),
+      time: getNowTimeString(true),
+      items: effectiveItems,
+      subtotal: effectiveSubtotal,
+      discount: totalDiscount,
+      total: currentTotal,
+      paymentMethod: 'efectivo',
+      amountPaid: effectivePaid,
+      change: effectiveChange,
+      customerName: custIdentifier,
+      customerPhone: cleanPhone || undefined,
+      pointsEarned,
+      pointsRedeemed: actualDiscount,
+      isSpecialDiscount: isSpecialCustomerDiscount,
+      specialDiscount: specialCustomerDiscount,
+      cashier: activeCashier,
+      shift: activeShift
+    };
+
+    let updatedCust: Customer | undefined;
+    if (selectedCustomer) {
+      updatedCust = {
+        ...selectedCustomer,
+        points: selectedCustomer.points - actualDiscount + pointsEarned,
+        totalSpent: selectedCustomer.totalSpent + currentTotal,
+        visitsCount: selectedCustomer.visitsCount + 1,
+        lastVisit: getTodayString()
+      };
+    } else if (cleanPhone.length >= 7) {
+      updatedCust = {
+        id: `cust-${Date.now()}`,
+        name: `Tel: ${cleanPhone}`,
+        phone: cleanPhone,
+        points: pointsEarned,
+        totalSpent: currentTotal,
+        visitsCount: 1,
+        lastVisit: getTodayString()
+      };
+    }
+
+    // REGISTRO OBLIGATORIO E INMEDIATO EN LA BASE DE DATOS Y EN LA NUBE
+    onSaveTicket(newTicket, updatedCust);
+    setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
+
+    if (!withoutTicket) {
+      // Con ticket: impresión térmica
+      setDirectPrintTicket(newTicket);
+      setPrintToastNotice(`🖨️ Imprimiendo Ticket #${folio} ($${currentTotal}.00)...`);
+      setTimeout(() => setPrintToastNotice(''), 3500);
+      printTicketDirectToPrinter(newTicket, settings);
+    } else {
+      // Sin ticket: celebración de dona
+      setCelebrationData({
+        total: currentTotal,
+        folio,
+        piecesCount: currentPieces,
+        customerName: custIdentifier
+      });
     }
 
     // Reset local counter state for next customer
@@ -1075,13 +1159,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   };
 
   // Mandar directo a cobro a la terminal Clip al decir "pagar con tarjeta" / "cobro con tarjeta"
-  const handleVoiceCardCheckout = () => {
-    if (ticketItems.length === 0) {
-      playBeep(320, 'sawtooth', 0.08);
-      setPrintToastNotice('⚠️ Primero agrega productos al ticket antes de cobrar con tarjeta.');
-      setTimeout(() => setPrintToastNotice(''), 3500);
-      return;
+  const handleVoiceCardCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
+    if (ticketItems.length === 0 && voiceItems && voiceItems.length > 0) {
+      handleAddVoiceItems(voiceItems);
     }
+    cardSkipPrintRef.current = withoutTicket;
     playBeep(750, 'sine', 0.05);
     const f = getNextTicketFolio(tickets);
     setActiveCardFolio(f);
@@ -2306,10 +2388,9 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <button
                     id="quick-checkout-no-ticket-btn"
                     type="button"
+                    disabled={ticketItems.length === 0}
                     onClick={handleQuickCheckoutWithoutTicket}
-                    className={`bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-emerald-500 min-h-[46px] ${
-                      ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-emerald-400/50 shadow-md'
-                    }`}
+                    className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-emerald-500 min-h-[46px]"
                     title="Registrar venta en efectivo sin imprimir ticket (animación de dona sonriente)"
                   >
                     <span className="text-sm leading-none">🍩</span>
@@ -2320,10 +2401,9 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <button
                     id="checkout-and-print-btn"
                     type="button"
+                    disabled={ticketItems.length === 0}
                     onClick={() => handleCompleteSale()}
-                    className={`bg-gradient-to-r from-[#D95D39] to-[#BF4C2A] hover:from-[#BF4C2A] hover:to-[#9E3B1C] text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-[#BF4C2A] min-h-[46px] ${
-                      ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-orange-400/60 shadow-md'
-                    }`}
+                    className="bg-gradient-to-r from-[#D95D39] to-[#BF4C2A] hover:from-[#BF4C2A] hover:to-[#9E3B1C] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-[#BF4C2A] min-h-[46px]"
                     title="Cobrar en efectivo e imprimir ticket térmico directo"
                   >
                     <Printer className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
@@ -2334,21 +2414,15 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <button
                     id="checkout-card-btn"
                     type="button"
+                    disabled={ticketItems.length === 0}
                     onClick={() => {
-                      if (ticketItems.length === 0) {
-                        playBeep(320, 'sawtooth', 0.08);
-                        setPrintToastNotice('⚠️ Primero agrega productos al ticket (ej. pulsa $5, $12 o dicta por voz).');
-                        setTimeout(() => setPrintToastNotice(''), 3500);
-                        return;
-                      }
+                      if (ticketItems.length === 0) return;
                       playBeep(750, 'sine', 0.05);
                       const f = getNextTicketFolio(tickets);
                       setActiveCardFolio(f);
                       setShowClipModal(true);
                     }}
-                    className={`bg-gradient-to-r from-[#FF5A00] to-[#E04D00] hover:from-[#E04D00] hover:to-[#C43E00] text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-[#E04D00] min-h-[46px] ${
-                      ticketItems.length === 0 ? 'opacity-85' : 'opacity-100 ring-2 ring-[#FF5A00]/60 shadow-md'
-                    }`}
+                    className="bg-gradient-to-r from-[#FF5A00] to-[#E04D00] hover:from-[#E04D00] hover:to-[#C43E00] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-[#E04D00] min-h-[46px]"
                     title="Cobrar automáticamente con terminal Clip Wi-Fi o tarjeta bancaria"
                   >
                     <CreditCard className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
@@ -4215,23 +4289,11 @@ export const PosCounter: React.FC<PosCounterProps> = ({
           setIsVoiceListening(listening);
           window.dispatchEvent(new CustomEvent('voice-assistant-listening-change', { detail: { listening } }));
         }}
-        onTriggerCheckout={(finalTotal, voiceItems) => {
-          playCashSound();
-          if (voiceItems && voiceItems.length > 0) {
-            const mappedItems: TicketItem[] = voiceItems.map(it => ({
-              id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              name: it.concepto,
-              price: it.precio_unitario,
-              quantity: it.cantidad,
-              total: it.subtotal
-            }));
-            handleCompleteSale(mappedItems);
-          } else {
-            handleCompleteSale();
-          }
+        onTriggerCheckout={(t, items, withoutTicket) => {
+          handleVoiceCheckout(t, items, withoutTicket !== false);
         }}
-        onTriggerCardCheckout={(t) => {
-          handleVoiceCardCheckout();
+        onTriggerCardCheckout={(t, items, withoutTicket) => {
+          handleVoiceCardCheckout(t, items, withoutTicket !== false);
         }}
         onCashReceived={(cash, change) => {
           setCashGivenInput(cash.toString());

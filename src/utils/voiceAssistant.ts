@@ -17,6 +17,7 @@ export interface VoiceCommandResult {
   rawTranscript?: string;
   isFinalCheckout?: boolean;
   isCardPayment?: boolean;
+  isWithoutTicket?: boolean;
   cashReceived?: number;
   changeToGive?: number;
   shouldCloseMic?: boolean;
@@ -118,8 +119,11 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   // Detect closing words
   const isCloseWord = /\b(cerrar|terminar|finalizar|salir|apagar microfono|apagar micro|apagar|adios)\b/.test(norm);
 
+  // Detect without ticket request
+  const isWithoutTicket = /\b(sin ticket|sin comprobante|sin papel|no ticket|cobrar sin ticket|cobro sin ticket|pagar sin ticket|venta sin ticket)\b/.test(norm);
+
   // Detect 'cuenta' command
-  const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(norm);
+  const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro|sin ticket|cobrar sin ticket|cobro sin ticket|pagar sin ticket|venta sin ticket)\b/.test(norm);
 
   // Detect card payment command ("cobro con tarjeta", "pago con tarjeta", "pagar con tarjeta", "tarjeta", "terminal")
   const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|pagar\s+tarjeta|con\s+tarjeta|tarjeta|terminal)\b/.test(norm);
@@ -139,7 +143,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
 
   // Remove filler and activation words
   workingText = workingText
-    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|cobro|iniciar cobro|abrir cobro|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
+    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|cobro|iniciar cobro|abrir cobro|sin ticket|sin comprobante|sin papel|no ticket|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -277,6 +281,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
     total,
     isFinalCheckout: isCuentaFinal,
     isCardPayment,
+    isWithoutTicket,
     cashReceived,
     changeToGive,
     shouldCloseMic: isCloseWord,
