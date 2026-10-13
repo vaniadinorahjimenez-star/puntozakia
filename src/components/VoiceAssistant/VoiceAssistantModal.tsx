@@ -40,7 +40,7 @@ interface VoiceAssistantModalProps {
   currentTicketCount?: number;
   currentTicketTotal?: number;
   onListeningStateChange?: (isListening: boolean) => void;
-  onTriggerCheckout?: (total: number) => void;
+  onTriggerCheckout?: (total: number, items?: VoiceCommandItem[]) => void;
   onTriggerCardCheckout?: (total: number) => void;
   onCashReceived?: (cash: number, change: number) => void;
 }
@@ -350,7 +350,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       playCashSound();
       playBeep(950, 'sine', 0.1);
       setSuccessToast(`¡Cobro completado! Total: $${finalTotal.toFixed(2)}`);
-      onTriggerCheckoutRef.current?.(finalTotal);
+      onTriggerCheckoutRef.current?.(finalTotal, itemsToAdd.length > 0 ? itemsToAdd : undefined);
       speakText("Cobro listo");
 
       handleCloseAudio();

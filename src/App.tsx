@@ -192,34 +192,50 @@ export default function App() {
 
   // Handlers
   const handleSaveTicket = (newTicket: SaleTicket, updatedCustomer?: Customer) => {
-    // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
-    const currentTickets = loadTickets();
-    const merged = mergeTickets([newTicket], currentTickets);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+    try {
+      // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
+      const currentTickets = loadTickets();
+      const merged = mergeTickets([newTicket], currentTickets);
+      try {
+        localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+      } catch (storageErr) {
+        console.warn('LocalStorage error saving ticket:', storageErr);
+      }
 
-    // 2. Actualizar estado de React functionalmente asegurando que newTicket esté presente
-    setTickets(prev => mergeTickets([newTicket], prev));
+      // 2. Actualizar estado de React funcionalmente asegurando que newTicket esté presente
+      setTickets(prev => mergeTickets([newTicket], prev));
 
-    if (updatedCustomer) {
-      setCustomers(prev => {
-        const idx = prev.findIndex(c => c.id === updatedCustomer.id || c.phone === updatedCustomer.phone);
-        let updatedList: Customer[];
-        if (idx >= 0) {
-          updatedList = [...prev];
-          updatedList[idx] = updatedCustomer;
-        } else {
-          updatedList = [updatedCustomer, ...prev];
-        }
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
-        return updatedList;
-      });
+      if (updatedCustomer) {
+        setCustomers(prev => {
+          const idx = prev.findIndex(c => c.id === updatedCustomer.id || c.phone === updatedCustomer.phone);
+          let updatedList: Customer[];
+          if (idx >= 0) {
+            updatedList = [...prev];
+            updatedList[idx] = updatedCustomer;
+          } else {
+            updatedList = [updatedCustomer, ...prev];
+          }
+          try {
+            localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
+          } catch (custErr) {
+            console.warn('LocalStorage error saving customer:', custErr);
+          }
+          return updatedList;
+        });
+      }
+
+      // 3. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
+      try {
+        broadcastRealtimeSale(newTicket);
+      } catch (bcErr) {
+        console.warn('BroadcastChannel error:', bcErr);
+      }
+
+      // 4. Disparar sincronización inmediata con la nube con los datos actualizados
+      syncWithCloud({ tickets: merged, customers: updatedCustomer ? [updatedCustomer] : undefined });
+    } catch (err) {
+      console.error('Error in handleSaveTicket:', err);
     }
-
-    // 3. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
-    broadcastRealtimeSale(newTicket);
-
-    // 4. Disparar sincronización inmediata con la nube con los datos actualizados
-    syncWithCloud({ tickets: merged, customers: updatedCustomer ? [updatedCustomer] : undefined });
   };
 
   const handleUpdateTicket = (updatedTicket: SaleTicket) => {
