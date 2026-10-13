@@ -663,28 +663,41 @@ export function mergeCustomers(existing: Customer[], incoming: Customer[]): Cust
 
 export function loadTickets(): SaleTicket[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.TICKETS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        // Garantizar que cada ticket cargado tenga un ID único y un folio no vacío
-        // Filtrar tickets de muestra antiguos (t-1001 a t-1004) para solo mostrar ventas 100% reales
-        const valid = parsed.filter(t => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
-        return valid.map((t, idx) => {
-          if (!t) return t;
-          const id = t.id && String(t.id).trim() !== '' 
-            ? String(t.id).trim() 
-            : `ticket-${t.date || 'd'}-${t.folio || idx}`;
-          const folio = t.folio && String(t.folio).trim() !== ''
-            ? String(t.folio).trim()
-            : `T-${String(1000 + idx).padStart(6, '0')}`;
-          return {
-            ...t,
-            id,
-            folio
-          };
-        });
-      }
+    const rawV1 = localStorage.getItem(STORAGE_KEYS.TICKETS);
+    const rawOld = localStorage.getItem('santafe_tickets');
+    let listV1: SaleTicket[] = [];
+    let listOld: SaleTicket[] = [];
+
+    if (rawV1) {
+      try {
+        const parsed = JSON.parse(rawV1);
+        if (Array.isArray(parsed)) listV1 = parsed;
+      } catch {}
+    }
+    if (rawOld) {
+      try {
+        const parsed = JSON.parse(rawOld);
+        if (Array.isArray(parsed)) listOld = parsed;
+      } catch {}
+    }
+
+    const combined = mergeTickets(listOld, listV1);
+    if (combined.length > 0) {
+      const valid = combined.filter(t => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
+      return valid.map((t, idx) => {
+        if (!t) return t;
+        const id = t.id && String(t.id).trim() !== '' 
+          ? String(t.id).trim() 
+          : `ticket-${t.date || 'd'}-${t.folio || idx}`;
+        const folio = t.folio && String(t.folio).trim() !== ''
+          ? String(t.folio).trim()
+          : `T-${String(1000 + idx).padStart(6, '0')}`;
+        return {
+          ...t,
+          id,
+          folio
+        };
+      });
     }
   } catch (e) {
     console.error('Error loading tickets', e);
@@ -694,19 +707,27 @@ export function loadTickets(): SaleTicket[] {
 
 /**
  * Guarda tickets COMBINANDO (merging) con los existentes en vez de sobrescribirlos
+ * y garantiza persistencia en santafe_tickets_v1 y santafe_tickets
  */
 export function saveTickets(tickets: SaleTicket[], forceOverwrite: boolean = false): void {
   try {
+    let toSave: SaleTicket[];
     if (forceOverwrite) {
-      localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(tickets));
-      return;
+      toSave = tickets;
+    } else {
+      const current = loadTickets();
+      toSave = mergeTickets(current, tickets);
     }
-    const current = loadTickets();
-    const merged = mergeTickets(current, tickets);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+    const str = JSON.stringify(toSave);
+    localStorage.setItem(STORAGE_KEYS.TICKETS, str);
+    localStorage.setItem('santafe_tickets', str);
   } catch (e) {
     console.error('Error guardando tickets combinados', e);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(tickets));
+    const str = JSON.stringify(tickets);
+    try {
+      localStorage.setItem(STORAGE_KEYS.TICKETS, str);
+      localStorage.setItem('santafe_tickets', str);
+    } catch {}
   }
 }
 

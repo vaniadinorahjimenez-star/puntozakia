@@ -231,26 +231,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     lastProcessedTimeRef.current = now;
 
     const norm = normalizeSpokenText(cleanText);
+    const result = parseVoiceCommandLocally(cleanText);
+    setParsedResult(result);
 
     const wasActiveInitially = isCobroActiveRef.current;
     const containsCobroWakeWord = /\b(cobrar|cobro|iniciar cobro|activar|abrir cobro|cuenta|la cuenta|sin ticket|cobrar sin ticket)\b/.test(norm);
 
-    // 1. If cobro is not active yet: ONLY activate when they say "cobrar" or "cobro"
-    // "solo activa el audio cuando diga cobrar, antes no, porque marca mal y de más cualquier palabra que digo"
+    // 1. If cobro is not active yet: activate when they speak cobro wake words OR dictate bakery items
     if (!wasActiveInitially) {
-      if (!containsCobroWakeWord) {
-        // Ignore any background chatter while not in active cobro mode!
+      if (!containsCobroWakeWord && result.items.length === 0 && !result.isCardPayment && !result.isWithoutTicket) {
+        // Ignore general background chatter that has no bakery products nor cobro commands
         return;
       }
-      // "cobrar" spoken! Activate cobro mode now!
       handleActivateCobro();
-      // Notice: If the utterance ALSO contains items (e.g. "cobrar 3 bolillos", "cobrar 3 de 5"),
-      // we must NOT return — continue below to parse and mark those items on the ticket!
     }
-
-    // 2. Cobro is ACTIVE: Parse locally in <0.1ms with zero network lag!
-    const result = parseVoiceCommandLocally(cleanText);
-    setParsedResult(result);
 
     // 3. Card payment direct to Clip terminal:
     // "que no mande ticket cuando le diga pagar con tarjeta, que mande directo a cobro a la terminal"
@@ -502,6 +496,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   // Auto-start listening as soon as modal opens, and stop on close
   useEffect(() => {
     if (isOpen) {
+      isCobroActiveRef.current = true;
+      setIsCobroActive(true);
       shouldKeepListeningRef.current = true;
       const timer = setTimeout(() => {
         startListening();

@@ -873,13 +873,31 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
   // Process & Complete Sale WITHOUT Ticket (Triggers celebratory smiling donut animation)
   const handleQuickCheckoutWithoutTicket = () => {
-    if (ticketItems.length === 0) return;
+    let effectiveItems = ticketItems.length > 0 ? [...ticketItems] : [];
+    let currentTotal = total;
+    let currentPieces = totalPieces;
+
+    if (effectiveItems.length === 0) {
+      const numInput = numericCashGiven > 0 ? numericCashGiven : (parseFloat(cashGivenInput) || 0);
+      if (numInput > 0) {
+        currentTotal = numInput;
+        currentPieces = 1;
+        effectiveItems = [{
+          id: `quick-item-${Date.now()}`,
+          name: `Pieza / Venta Mostrador ($${numInput})`,
+          price: numInput,
+          quantity: 1,
+          total: numInput
+        }];
+      } else {
+        playBeep(400, 'sawtooth', 0.08);
+        return;
+      }
+    }
 
     playCashSound();
 
     const folio = getNextTicketFolio(tickets);
-    const currentTotal = total;
-    const currentPieces = totalPieces;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
     const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
@@ -1067,8 +1085,19 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     }
 
     if (effectiveItems.length === 0) {
-      playBeep(400, 'sawtooth', 0.1);
-      return;
+      const fallbackTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : total;
+      if (fallbackTotal > 0) {
+        effectiveItems = [{
+          id: `voice-item-${Date.now()}`,
+          name: `Pieza / Venta Mostrador ($${fallbackTotal})`,
+          price: fallbackTotal,
+          quantity: 1,
+          total: fallbackTotal
+        }];
+      } else {
+        playBeep(400, 'sawtooth', 0.1);
+        return;
+      }
     }
 
     playCashSound();
@@ -2388,7 +2417,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
                   <button
                     id="quick-checkout-no-ticket-btn"
                     type="button"
-                    disabled={ticketItems.length === 0}
+                    disabled={ticketItems.length === 0 && numericCashGiven <= 0 && !(parseFloat(cashGivenInput) > 0)}
                     onClick={handleQuickCheckoutWithoutTicket}
                     className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-2 px-1 rounded-xl shadow-xs hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer border border-emerald-500 min-h-[46px]"
                     title="Registrar venta en efectivo sin imprimir ticket (animación de dona sonriente)"

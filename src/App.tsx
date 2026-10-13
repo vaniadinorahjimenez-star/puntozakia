@@ -195,7 +195,9 @@ export default function App() {
     // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
     const currentTickets = loadTickets();
     const merged = mergeTickets([newTicket], currentTickets);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+    const serializedTickets = JSON.stringify(merged);
+    localStorage.setItem(STORAGE_KEYS.TICKETS, serializedTickets);
+    localStorage.setItem('santafe_tickets', serializedTickets);
 
     // 2. Actualizar estado de React functionalmente asegurando que newTicket esté presente
     setTickets(prev => mergeTickets([newTicket], prev));

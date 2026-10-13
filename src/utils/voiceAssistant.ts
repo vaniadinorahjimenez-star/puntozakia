@@ -271,6 +271,23 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   }
   workingText = workingText.replace(standaloneDeRegex, ' ');
 
+  // 5. Standalone single amount (e.g. "cobrar 50 pesos sin ticket", "80 pesos", "cobro 50")
+  if (items.length === 0) {
+    const singleAmountRegex = /\b(?:de\s+)?(\d+)(?:\s*(?:pesos?|mxn))?\b/;
+    const m = singleAmountRegex.exec(workingText);
+    if (m) {
+      const amount = parseInt(m[1], 10);
+      if (!isNaN(amount) && amount > 0 && amount <= 5000) {
+        items.push({
+          cantidad: 1,
+          concepto: `Pieza $${amount}`,
+          precio_unitario: amount,
+          subtotal: amount
+        });
+      }
+    }
+  }
+
   // Calculate total
   const total = Math.round(items.reduce((acc, curr) => acc + curr.subtotal, 0) * 100) / 100;
   const changeToGive = (cashReceived !== undefined && total > 0) ? Math.round((cashReceived - total) * 100) / 100 : undefined;

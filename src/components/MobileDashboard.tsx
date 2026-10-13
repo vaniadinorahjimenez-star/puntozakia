@@ -261,9 +261,90 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     if (showReceipt) {
       setTicketToView(newTicket);
     } else {
+      setCelebrationData({
+        total: totalAmount,
+        folio: nextFolio,
+        piecesCount: totalPieces,
+        customerName: 'Público en Mostrador'
+      });
       setSuccessToast(`¡Venta #${nextFolio} cobrada ($${totalAmount}.00)!`);
       setTimeout(() => setSuccessToast(''), 3000);
     }
+  };
+
+  const handleVoiceCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
+    let effectiveItems: TicketItem[] = ticketItems.length > 0 ? [...ticketItems] : [];
+
+    if (effectiveItems.length === 0 && voiceItems && voiceItems.length > 0) {
+      effectiveItems = voiceItems.map((vItem, idx) => ({
+        id: `voice-item-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+        name: vItem.concepto,
+        price: vItem.precio_unitario,
+        quantity: vItem.cantidad,
+        total: vItem.subtotal
+      }));
+    }
+
+    if (effectiveItems.length === 0) {
+      const fallbackTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : totalAmount;
+      if (fallbackTotal > 0) {
+        effectiveItems = [{
+          id: `voice-item-${Date.now()}`,
+          name: `Pieza / Venta Mostrador ($${fallbackTotal})`,
+          price: fallbackTotal,
+          quantity: 1,
+          total: fallbackTotal
+        }];
+      } else {
+        playBeep(400, 'sawtooth', 0.1);
+        return;
+      }
+    }
+
+    playCashSound();
+    const nextFolio = getNextTicketFolio(tickets);
+    const effectiveSubtotal = effectiveItems.reduce((acc, it) => acc + it.total, 0);
+    const currentTotal = (voiceTotal && voiceTotal > 0) ? voiceTotal : effectiveSubtotal;
+    const currentPieces = effectiveItems.reduce((acc, it) => acc + it.quantity, 0);
+
+    const newTicket: SaleTicket = {
+      id: `ticket-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      folio: nextFolio,
+      timestamp: new Date().toISOString(),
+      date: todayStr,
+      time: getNowTimeString(true),
+      items: effectiveItems,
+      subtotal: effectiveSubtotal,
+      discount: 0,
+      total: currentTotal,
+      paymentMethod: 'efectivo',
+      amountPaid: currentTotal,
+      change: 0,
+      customerName: 'Público en Mostrador',
+      pointsEarned: Math.floor(currentTotal / (settings.loyaltyPointsPerPesos || 20)),
+      pointsRedeemed: 0,
+      cashier: activeShift === 'turno1' ? 'Cajero Turno 1' : 'Cajero Turno 2',
+      shift: activeShift
+    };
+
+    onSaveTicket(newTicket);
+    setTicketItems([]);
+    setMultiplier(1);
+
+    if (withoutTicket) {
+      setCelebrationData({
+        total: currentTotal,
+        folio: nextFolio,
+        piecesCount: currentPieces,
+        customerName: 'Público en Mostrador'
+      });
+    } else {
+      setTicketToView(newTicket);
+    }
+  };
+
+  const handleVoiceCardCheckout = (voiceTotal?: number, voiceItems?: VoiceCommandItem[], withoutTicket: boolean = true) => {
+    handleVoiceCheckout(voiceTotal, voiceItems, withoutTicket);
   };
 
   // Quick Preset Prices
@@ -874,8 +955,26 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         }}
         onAddItemsToTicket={handleAddVoiceItems}
         currentTicketCount={ticketItems.length}
+        currentTicketTotal={totalAmount}
         onListeningStateChange={setIsMobileVoiceListening}
+        onTriggerCheckout={(t, items, withoutTicket) => {
+          handleVoiceCheckout(t, items, withoutTicket !== false);
+        }}
+        onTriggerCardCheckout={(t, items, withoutTicket) => {
+          handleVoiceCardCheckout(t, items, withoutTicket !== false);
+        }}
       />
+
+      {/* Smiling Donut Celebration Modal (Cobro sin ticket) */}
+      {celebrationData && (
+        <HeartBreadCelebration
+          total={celebrationData.total}
+          folio={celebrationData.folio}
+          piecesCount={celebrationData.piecesCount}
+          customerName={celebrationData.customerName}
+          onClose={() => setCelebrationData(null)}
+        />
+      )}
 
     </div>
   );
