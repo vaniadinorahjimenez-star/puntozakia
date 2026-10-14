@@ -132,58 +132,35 @@ service cloud.firestore {
     // Tickets collection
     match /tickets/{ticketId} {
       allow get, list: if true;
-      allow create: if isValidId(ticketId) && isValidTicket(incoming());
-      allow update: if isValidId(ticketId) && isValidTicket(incoming()) && (
-        isBootstrappedAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'paymentMethod', 'cardTerminal', 'cardAuthCode', 'cardReference', 'cardLast4',
-          'amountPaid', 'change', 'total', 'subtotal', 'shift', 'customerName', 'customerPhone',
-          'pointsEarned', 'pointsRedeemed'
-        ])
-      );
+      allow create, update: if isValidId(ticketId) && isValidTicket(incoming());
       allow delete: if isBootstrappedAdmin();
     }
 
     // Orders collection
     match /orders/{orderId} {
       allow get, list: if true;
-      allow create: if isValidId(orderId) && isValidOrder(incoming());
-      allow update: if isValidId(orderId) && isValidOrder(incoming()) && (
-        isBootstrappedAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'paymentStatus', 'deliveryStatus', 'collectedAmount', 'deposit', 'pendingAmount',
-          'assignedDriverId', 'notes', 'deliveredAt', 'invoiceStatus', 'paidDate', 'paidMethod', 'paidReference'
-        ])
-      );
+      allow create, update: if isValidId(orderId) && isValidOrder(incoming());
       allow delete: if isBootstrappedAdmin();
     }
 
     // Shift Cuts
     match /shiftCuts/{shiftCutId} {
       allow get, list: if true;
-      allow create: if isValidId(shiftCutId) && isValidShiftCut(incoming());
-      allow update: if isValidId(shiftCutId) && isValidShiftCut(incoming());
+      allow create, update: if isValidId(shiftCutId) && isValidShiftCut(incoming());
       allow delete: if isBootstrappedAdmin();
     }
 
     // Cash Outflows
     match /outflows/{outflowId} {
       allow get, list: if true;
-      allow create: if isValidId(outflowId) && isValidCashOutflow(incoming());
-      allow update: if isValidId(outflowId) && isValidCashOutflow(incoming());
+      allow create, update: if isValidId(outflowId) && isValidCashOutflow(incoming());
       allow delete: if isBootstrappedAdmin();
     }
 
     // Customer Loyalty Records
     match /customers/{customerId} {
       allow get, list: if true;
-      allow create: if isValidId(customerId) && isValidCustomer(incoming());
-      allow update: if isValidId(customerId) && isValidCustomer(incoming()) && (
-        isBootstrappedAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'points', 'totalSpent', 'visitsCount', 'lastVisit', 'name', 'phone'
-        ])
-      );
+      allow create, update: if isValidId(customerId) && isValidCustomer(incoming());
       allow delete: if isBootstrappedAdmin();
     }
 

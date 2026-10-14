@@ -49,6 +49,7 @@ import { CashShiftCutModal } from './ShiftCut/CashShiftCutModal';
 import { HeartBreadCelebration } from './HeartBreadCelebration';
 import { VoiceAssistantModal } from './VoiceAssistant/VoiceAssistantModal';
 import { VoiceCommandItem } from '../utils/voiceAssistant';
+import { FirebaseSyncStatus } from '../services/firebaseSyncService';
 
 export type MobileTab = 'pos' | 'summary' | 'tickets' | 'orders';
 
@@ -65,6 +66,8 @@ interface MobileDashboardProps {
   onSaveOrder?: (order: BakeryOrder) => void;
   onUpdateOrder?: (order: BakeryOrder) => void;
   onSelectTab?: (tab: string) => void;
+  firebaseStatus?: FirebaseSyncStatus;
+  onRefreshCloud?: () => Promise<void>;
 }
 
 export const MobileDashboard: React.FC<MobileDashboardProps> = ({
@@ -79,10 +82,27 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   onRegisterCustomer,
   onSaveOrder,
   onUpdateOrder,
-  onSelectTab
+  onSelectTab,
+  firebaseStatus,
+  onRefreshCloud
 }) => {
   const todayStr = getTodayString();
-  const [activeMobileTab, setActiveMobileTab] = useState<MobileTab>('pos');
+  const [activeMobileTab, setActiveMobileTab] = useState<MobileTab>('summary');
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    playBeep(650, 'sine', 0.04);
+    try {
+      if (onRefreshCloud) {
+        await onRefreshCloud();
+      }
+    } catch (err) {
+      console.warn('Error refrescando Firestore:', err);
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   // Active shift state (defaults to Turno 1 before 15:00, Turno 2 >= 15:00)
   const [activeShift, setActiveShift] = useState<'turno1' | 'turno2'>(() => {
@@ -156,30 +176,33 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   // Today's tickets & summary
   const todayTickets = useMemo(() => {
     return tickets.filter(t => {
-      if (t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date.trim())) {
-        return t.date.trim() === todayStr;
-      }
+      if (!t) return false;
+      const cleanDate = t.date ? t.date.replace(/\//g, '-').trim() : '';
+      if (cleanDate === todayStr) return true;
       if (t.timestamp) {
         try {
           const d = new Date(t.timestamp);
-          if (!isNaN(d.getTime())) return formatLocalDate(d) === todayStr;
+          if (!isNaN(d.getTime()) && formatLocalDate(d) === todayStr) return true;
+          if (t.timestamp.startsWith(todayStr)) return true;
         } catch {}
       }
       return false;
     });
   }, [tickets, todayStr]);
 
-  const todayTotal = useMemo(() => todayTickets.reduce((acc, t) => acc + t.total, 0), [todayTickets]);
-  const todayCash = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'efectivo').reduce((acc, t) => acc + t.total, 0), [todayTickets]);
-  const todayCard = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'tarjeta').reduce((acc, t) => acc + t.total, 0), [todayTickets]);
-  const todayPieces = useMemo(() => todayTickets.reduce((acc, t) => acc + t.items.reduce((sum, it) => sum + it.quantity, 0), 0), [todayTickets]);
+  const todayTotal = useMemo(() => todayTickets.reduce((acc, t) => acc + (t.total || 0), 0), [todayTickets]);
+  const todayCardTickets = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'tarjeta'), [todayTickets]);
+  const todayCashTickets = useMemo(() => todayTickets.filter(t => t.paymentMethod === 'efectivo'), [todayTickets]);
+  const todayCash = useMemo(() => todayCashTickets.reduce((acc, t) => acc + (t.total || 0), 0), [todayCashTickets]);
+  const todayCard = useMemo(() => todayCardTickets.reduce((acc, t) => acc + (t.total || 0), 0), [todayCardTickets]);
+  const todayPieces = useMemo(() => todayTickets.reduce((acc, t) => acc + (t.items ? t.items.reduce((sum, it) => sum + it.quantity, 0) : 0), 0), [todayTickets]);
 
   // Turnos today
   const turno1Tickets = useMemo(() => todayTickets.filter(t => resolveTicketShift(t) === 'turno1'), [todayTickets]);
-  const turno1Total = useMemo(() => turno1Tickets.reduce((acc, t) => acc + t.total, 0), [turno1Tickets]);
+  const turno1Total = useMemo(() => turno1Tickets.reduce((acc, t) => acc + (t.total || 0), 0), [turno1Tickets]);
 
   const turno2Tickets = useMemo(() => todayTickets.filter(t => resolveTicketShift(t) === 'turno2'), [todayTickets]);
-  const turno2Total = useMemo(() => turno2Tickets.reduce((acc, t) => acc + t.total, 0), [turno2Tickets]);
+  const turno2Total = useMemo(() => turno2Tickets.reduce((acc, t) => acc + (t.total || 0), 0), [turno2Tickets]);
 
   // Today's orders
   const todayOrders = useMemo(() => {
@@ -334,6 +357,42 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
             <span>T2</span>
           </button>
         </div>
+      </div>
+
+      {/* BANNER DE CONEXIÓN A BASE DE DATOS FIREBASE EN LA NUBE EN TIEMPO REAL */}
+      <div className={`p-2.5 rounded-2xl border shadow-2xs transition-all flex items-center justify-between gap-2 ${
+        firebaseStatus?.connected 
+          ? 'bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-emerald-200 text-emerald-950' 
+          : 'bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border-amber-200 text-amber-950'
+      }`}>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="relative shrink-0 flex items-center justify-center">
+            <span className={`w-3 h-3 rounded-full ${firebaseStatus?.connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            {firebaseStatus?.connected && (
+              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping absolute inset-0 opacity-75" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="font-extrabold text-[11px] flex items-center gap-1.5 leading-tight">
+              <span>{firebaseStatus?.connected ? 'Base en la Nube Conectada' : 'Conectando a Firebase Nube...'}</span>
+              <span className="text-[9px] bg-white/90 px-1.5 py-0.2 rounded-full font-bold border border-emerald-300 text-emerald-800">En Vivo</span>
+            </div>
+            <div className="text-[10px] text-slate-600 truncate font-medium">
+              {todayTickets.length} ventas hoy ({todayCardTickets.length} con Donita/Clip • {todayCashTickets.length} efectivo)
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-1 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 px-2.5 py-1.5 rounded-xl font-bold text-[10px] cursor-pointer transition-all border border-slate-200 shadow-2xs shrink-0"
+          title="Actualizar y descargar cobros desde Firebase Firestore"
+        >
+          <RefreshCw className={`w-3 h-3 text-emerald-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span>{isRefreshing ? 'Sincronizando...' : 'Actualizar'}</span>
+        </button>
       </div>
 
       {/* SUCCESS TOAST */}
@@ -642,11 +701,17 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 text-xs font-mono tabular-nums">
               <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60">
-                <span className="text-[10px] text-emerald-400 uppercase font-bold block">💵 Efectivo</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-emerald-400 uppercase font-bold block">💵 Efectivo</span>
+                  <span className="text-[9px] text-slate-400 font-sans font-medium">{todayCashTickets.length} cobros</span>
+                </div>
                 <span className="text-base font-bold text-white">${todayCash}.00</span>
               </div>
               <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60">
-                <span className="text-[10px] text-sky-400 uppercase font-bold block">💳 Tarjeta / Clip</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-sky-400 uppercase font-bold block">💳 Donita / Clip</span>
+                  <span className="text-[9px] text-slate-400 font-sans font-medium">{todayCardTickets.length} cobros</span>
+                </div>
                 <span className="text-base font-bold text-white">${todayCard}.00</span>
               </div>
             </div>
@@ -684,6 +749,63 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
                 {turno2Tickets.length} tickets
               </div>
             </div>
+          </div>
+
+          {/* Feed de Ventas de Hoy en Tiempo Real */}
+          <div className="bg-white rounded-2xl p-3 border border-slate-200/80 shadow-xs space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-xs font-bold text-slate-800">Cobros de Hoy en Vivo ({todayTickets.length})</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveMobileTab('tickets')}
+                className="text-[11px] font-bold text-amber-700 hover:text-amber-800 flex items-center gap-0.5"
+              >
+                <span>Ver todos</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {todayTickets.length === 0 ? (
+              <div className="p-4 text-center text-xs text-slate-400 font-medium bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                Esperando cobros del día... Cualquier venta que cobre la terminal Donita o la caja aparecerá aquí en tiempo real.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {todayTickets.slice(-5).reverse().map(ticket => (
+                  <div
+                    key={ticket.id}
+                    onClick={() => setTicketToView(ticket)}
+                    className="p-2.5 rounded-xl border border-slate-100 hover:border-slate-300 bg-slate-50/70 hover:bg-white flex items-center justify-between transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                        ticket.paymentMethod === 'tarjeta'
+                          ? 'bg-sky-100 text-sky-800 border border-sky-200'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
+                        {ticket.paymentMethod === 'tarjeta' ? '💳 Donita' : '💵 Efectivo'}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold font-mono text-slate-900 leading-tight">
+                          #{ticket.folio} • <span className="font-sans font-medium text-slate-500 text-[10px]">{ticket.time}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {ticket.cashier ? `Cajero: ${ticket.cashier}` : 'Mostrador'} • {ticket.items ? ticket.items.reduce((s, it) => s + it.quantity, 0) : 0} pzs
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-xs font-black font-mono text-slate-900 tabular-nums">
+                        ${ticket.total}.00
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Fast Action Buttons */}

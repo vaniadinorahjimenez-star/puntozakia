@@ -68,7 +68,8 @@ import {
   fetchAndMergeCloud, 
   onCloudSyncUpdated, 
   getCloudSyncStatus,
-  broadcastRealtimeSale
+  broadcastRealtimeSale,
+  areTicketsIdentical
 } from './services/cloudSyncService';
 
 export default function App() {
@@ -137,10 +138,15 @@ export default function App() {
     const unsubTickets = listenToFirebaseTickets((cloudTickets) => {
       if (!isMounted) return;
       setTickets(prev => {
-        if (prev.length === cloudTickets.length && prev[0]?.id === cloudTickets[0]?.id) {
+        const merged = mergeTickets(prev, cloudTickets);
+        if (areTicketsIdentical(prev, merged)) {
           return prev;
         }
-        return mergeTickets(prev, cloudTickets);
+        try {
+          safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
+          safeLocalStorageSetItem('santafe_tickets', JSON.stringify(merged));
+        } catch {}
+        return merged;
       });
     });
 
@@ -162,10 +168,8 @@ export default function App() {
           if (res.mergedData.tickets) {
             setTickets(prev => {
               const incoming = res.mergedData!.tickets;
-              if (prev.length === incoming.length && prev[0]?.id === incoming[0]?.id) {
-                return prev;
-              }
-              return mergeTickets(prev, incoming);
+              const merged = mergeTickets(prev, incoming);
+              return areTicketsIdentical(prev, merged) ? prev : merged;
             });
           }
           if (res.mergedData.orders) {
@@ -195,10 +199,8 @@ export default function App() {
       if (!isMounted) return;
       if (merged.tickets) {
         setTickets(prev => {
-          if (prev.length === merged.tickets.length && prev[0]?.id === merged.tickets[0]?.id) {
-            return prev;
-          }
-          return mergeTickets(prev, merged.tickets);
+          const combined = mergeTickets(prev, merged.tickets);
+          return areTicketsIdentical(prev, combined) ? prev : combined;
         });
       }
       if (merged.orders) {
@@ -449,6 +451,10 @@ export default function App() {
             onSaveOrder={handleSaveOrder}
             onUpdateOrder={handleUpdateOrder}
             onSelectTab={setActiveTab}
+            firebaseStatus={firebaseStatus}
+            onRefreshCloud={async () => {
+              await fetchAndMergeCloud();
+            }}
           />
         )}
 
