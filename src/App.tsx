@@ -77,9 +77,10 @@ export default function App() {
   });
 
   // Accessibility Zoom Level (-1, 0, 1, 2)
+  // Accessibility Zoom Level (-1, 0, 1, 2)
   const [zoomLevel, setZoomLevel] = useState<number>(0);
 
-  // Persistence effects
+  // Persistence effects (only save to local storage when state changes)
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
@@ -87,18 +88,6 @@ export default function App() {
   useEffect(() => {
     saveProducts(products);
   }, [products]);
-
-  useEffect(() => {
-    saveTickets(tickets);
-  }, [tickets]);
-
-  useEffect(() => {
-    saveCustomers(customers);
-  }, [customers]);
-
-  useEffect(() => {
-    saveOrders(orders);
-  }, [orders]);
 
   useEffect(() => {
     saveDrivers(drivers);
@@ -110,18 +99,37 @@ export default function App() {
 
   // Cloud Synchronization: Combina en tiempo real entre Computadora y Teléfono
   useEffect(() => {
+    let isMounted = true;
+
     const pullAndApplyCloud = async () => {
+      // Si la pestaña está oculta, evitar gasto innecesario de recursos
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const res = await fetchAndMergeCloud();
+        if (!isMounted) return;
         if (res.success && res.mergedData) {
           if (res.mergedData.tickets) {
-            setTickets(prev => mergeTickets(prev, res.mergedData!.tickets));
+            setTickets(prev => {
+              const incoming = res.mergedData!.tickets;
+              if (prev.length === incoming.length && prev[0]?.id === incoming[0]?.id) {
+                return prev;
+              }
+              return mergeTickets(prev, incoming);
+            });
           }
           if (res.mergedData.orders) {
-            setOrders(prev => mergeOrders(prev, res.mergedData!.orders));
+            setOrders(prev => {
+              const incoming = res.mergedData!.orders;
+              if (prev.length === incoming.length) return prev;
+              return mergeOrders(prev, incoming);
+            });
           }
           if (res.mergedData.customers) {
-            setCustomers(prev => mergeCustomers(prev, res.mergedData!.customers));
+            setCustomers(prev => {
+              const incoming = res.mergedData!.customers;
+              if (prev.length === incoming.length) return prev;
+              return mergeCustomers(prev, incoming);
+            });
           }
         }
       } catch (err) {
@@ -132,23 +140,36 @@ export default function App() {
     // 1. Descargar y combinar datos existentes en la nube al abrir la app
     pullAndApplyCloud();
 
-    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado
+    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado (solo si hay cambios reales)
     const unsubscribe = onCloudSyncUpdated((merged) => {
+      if (!isMounted) return;
       if (merged.tickets) {
-        setTickets(prev => mergeTickets(prev, merged.tickets));
+        setTickets(prev => {
+          if (prev.length === merged.tickets.length && prev[0]?.id === merged.tickets[0]?.id) {
+            return prev;
+          }
+          return mergeTickets(prev, merged.tickets);
+        });
       }
       if (merged.orders) {
-        setOrders(prev => mergeOrders(prev, merged.orders));
+        setOrders(prev => {
+          if (prev.length === merged.orders.length) return prev;
+          return mergeOrders(prev, merged.orders);
+        });
       }
       if (merged.customers) {
-        setCustomers(prev => mergeCustomers(prev, merged.customers));
+        setCustomers(prev => {
+          if (prev.length === merged.customers.length) return prev;
+          return mergeCustomers(prev, merged.customers);
+        });
       }
     });
 
     // 3. Sincronizar entre pestañas abiertas en el mismo dispositivo
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'santafe_tickets') {
-        setTickets(prev => mergeTickets(prev, loadTickets()));
+        const fresh = loadTickets();
+        setTickets(prev => (prev.length === fresh.length ? prev : mergeTickets(prev, fresh)));
       } else if (e.key === 'santafe_orders') {
         setOrders(prev => mergeOrders(prev, loadOrders()));
       } else if (e.key === 'santafe_customers') {
@@ -157,10 +178,10 @@ export default function App() {
     };
     window.addEventListener('storage', handleStorageChange);
 
-    // 4. Chequeo periódico en segundo plano en TIEMPO REAL (cada 3.5 segundos)
+    // 4. Chequeo periódico en segundo plano optimizado (cada 12 segundos para máxima velocidad y 0 lags)
     const syncInterval = setInterval(() => {
       pullAndApplyCloud();
-    }, 3500);
+    }, 12000);
 
     // 5. Al regresar a la pestaña o prender la pantalla del celular, actualizar de inmediato
     const handleVisibilityOrFocus = () => {
@@ -173,6 +194,7 @@ export default function App() {
     window.addEventListener('online', handleVisibilityOrFocus);
 
     return () => {
+      isMounted = false;
       unsubscribe();
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('focus', handleVisibilityOrFocus);
@@ -182,24 +204,17 @@ export default function App() {
     };
   }, []);
 
-  // Sincronizar automáticamente hacia la nube tras registrar cambios
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      syncWithCloud({ tickets, orders, customers });
-    }, 600);
-    return () => clearTimeout(timeout);
-  }, [tickets, orders, customers]);
-
-  // Handlers
+  // Handlers con guardado atómico inmediato
   const handleSaveTicket = (newTicket: SaleTicket, updatedCustomer?: Customer) => {
     // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
     const currentTickets = loadTickets();
     const merged = mergeTickets([newTicket], currentTickets);
     localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(merged));
 
-    // 2. Actualizar estado de React functionalmente asegurando que newTicket esté presente
-    setTickets(prev => mergeTickets([newTicket], prev));
+    // 2. Actualizar estado de React functionalmente asegurando que newTicket esté al inicio
+    setTickets(merged);
 
+    let nextCustomers: Customer[] | undefined;
     if (updatedCustomer) {
       setCustomers(prev => {
         const idx = prev.findIndex(c => c.id === updatedCustomer.id || c.phone === updatedCustomer.phone);
@@ -211,6 +226,7 @@ export default function App() {
           updatedList = [updatedCustomer, ...prev];
         }
         localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
+        nextCustomers = updatedList;
         return updatedList;
       });
     }
@@ -218,14 +234,15 @@ export default function App() {
     // 3. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
     broadcastRealtimeSale(newTicket);
 
-    // 4. Disparar sincronización inmediata con la nube con los datos actualizados
-    syncWithCloud({ tickets: merged, customers: updatedCustomer ? [updatedCustomer] : undefined });
+    // 4. Disparar sincronización inmediata con la nube con los datos frescos
+    syncWithCloud({ tickets: merged, customers: nextCustomers || (updatedCustomer ? [updatedCustomer] : undefined) });
   };
 
   const handleUpdateTicket = (updatedTicket: SaleTicket) => {
     setTickets(prev => {
       const updated = prev.map(t => (t.id === updatedTicket.id ? updatedTicket : t));
       saveTickets(updated, true);
+      syncWithCloud({ tickets: updated });
       return updated;
     });
   };
@@ -234,6 +251,7 @@ export default function App() {
     const updated = loadTickets().filter(t => t.id !== ticketId);
     saveTickets(updated, true);
     setTickets(updated);
+    syncWithCloud({ tickets: updated });
   };
 
   const handleRegisterCustomer = (newCustomer: Customer) => {

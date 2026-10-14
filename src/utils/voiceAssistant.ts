@@ -17,6 +17,7 @@ export interface VoiceCommandResult {
   rawTranscript?: string;
   isFinalCheckout?: boolean;
   isCardPayment?: boolean;
+  isWithoutTicket?: boolean;
   cashReceived?: number;
   changeToGive?: number;
   shouldCloseMic?: boolean;
@@ -118,8 +119,11 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   // Detect closing words
   const isCloseWord = /\b(cerrar|terminar|finalizar|salir|apagar microfono|apagar micro|apagar|adios)\b/.test(norm);
 
+  // Detect without ticket request
+  const isWithoutTicket = /\b(sin ticket|sin comprobante|sin papel|no ticket|cobrar sin ticket|cobro sin ticket|pagar sin ticket|venta sin ticket)\b/.test(norm);
+
   // Detect 'cuenta' command
-  const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro)\b/.test(norm);
+  const isCuentaFinal = /\b(cuenta|la cuenta|dar cuenta|cobrar|cierre de cuenta|terminar cuenta|total cuenta|cobro|sin ticket|cobrar sin ticket|cobro sin ticket|pagar sin ticket|venta sin ticket)\b/.test(norm);
 
   // Detect card payment command ("cobro con tarjeta", "pago con tarjeta", "pagar con tarjeta", "tarjeta", "terminal")
   const isCardPayment = /\b(cobro\s+con\s+tarjeta|pago\s+con\s+tarjeta|pagar\s+con\s+tarjeta|cobrar\s+con\s+tarjeta|cobro\s+tarjeta|pago\s+tarjeta|pagar\s+tarjeta|con\s+tarjeta|tarjeta|terminal)\b/.test(norm);
@@ -139,7 +143,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
 
   // Remove filler and activation words
   workingText = workingText
-    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|cobro|iniciar cobro|abrir cobro|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
+    .replace(/\b(cuenta|abrir cuenta|iniciar|cobrar|cobro|iniciar cobro|abrir cobro|sin ticket|sin comprobante|sin papel|no ticket|ehh|eh|a ver|aver|ponle|pon|dame|agrega|sumale|sumar|por favor|porfa|favor|cerrar|terminar|apagar|tarjeta|recibo|recibe|pagan con|paga con|me dan|billete de)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -267,6 +271,23 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
   }
   workingText = workingText.replace(standaloneDeRegex, ' ');
 
+  // 5. Standalone single amount (e.g. "cobrar 50 pesos sin ticket", "80 pesos", "cobro 50")
+  if (items.length === 0) {
+    const singleAmountRegex = /\b(?:de\s+)?(\d+)(?:\s*(?:pesos?|mxn))?\b/;
+    const m = singleAmountRegex.exec(workingText);
+    if (m) {
+      const amount = parseInt(m[1], 10);
+      if (!isNaN(amount) && amount > 0 && amount <= 5000) {
+        items.push({
+          cantidad: 1,
+          concepto: `Pieza $${amount}`,
+          precio_unitario: amount,
+          subtotal: amount
+        });
+      }
+    }
+  }
+
   // Calculate total
   const total = Math.round(items.reduce((acc, curr) => acc + curr.subtotal, 0) * 100) / 100;
   const changeToGive = (cashReceived !== undefined && total > 0) ? Math.round((cashReceived - total) * 100) / 100 : undefined;
@@ -277,6 +298,7 @@ export function parseVoiceCommandLocally(transcript: string): VoiceCommandResult
     total,
     isFinalCheckout: isCuentaFinal,
     isCardPayment,
+    isWithoutTicket,
     cashReceived,
     changeToGive,
     shouldCloseMic: isCloseWord,

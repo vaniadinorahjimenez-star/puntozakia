@@ -859,6 +859,14 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     // Ejecutar impresión directa térmica aislada
     printTicketDirectToPrinter(newTicket, settings);
 
+    // Animación de la donita sonriente para registro con ticket
+    setCelebrationData({
+      total,
+      folio,
+      piecesCount: totalPieces,
+      customerName: custIdentifier
+    });
+
     // Reset local counter state for next customer
     setTicketItems([]);
     setPointsToRedeem(0);
@@ -1028,6 +1036,14 @@ export const PosCounter: React.FC<PosCounterProps> = ({
 
     // Ejecutar impresión directa térmica aislada
     printTicketDirectToPrinter(newTicket, settings);
+
+    // Animación de la donita sonriente para registro con tarjeta
+    setCelebrationData({
+      total,
+      folio,
+      piecesCount: totalPieces,
+      customerName: custIdentifier
+    });
 
     // Reset local counter state for next customer
     setTicketItems([]);
@@ -4170,6 +4186,7 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         }}
         onTriggerCheckout={(t) => {
           playCashSound();
+          handleQuickCheckoutWithoutTicket();
         }}
         onTriggerCardCheckout={(t) => {
           handleVoiceCardCheckout();

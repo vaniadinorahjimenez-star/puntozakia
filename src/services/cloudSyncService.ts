@@ -101,10 +101,18 @@ let pendingProvidedData: {
   customers?: Customer[];
 } | undefined = undefined;
 
-function areTicketsIdentical(a: SaleTicket[], b: SaleTicket[]): boolean {
+export function areTicketsIdentical(a: SaleTicket[], b: SaleTicket[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i]?.id !== b[i]?.id || a[i]?.paymentMethod !== b[i]?.paymentMethod) return false;
+    if (a[i]?.id !== b[i]?.id || a[i]?.paymentMethod !== b[i]?.paymentMethod || a[i]?.total !== b[i]?.total) return false;
+  }
+  return true;
+}
+
+function areOrdersIdentical(a: BakeryOrder[], b: BakeryOrder[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]?.id !== b[i]?.id || a[i]?.paymentStatus !== b[i]?.paymentStatus || a[i]?.deliveryStatus !== b[i]?.deliveryStatus || a[i]?.collectedAmount !== b[i]?.collectedAmount) return false;
   }
   return true;
 }
@@ -123,10 +131,18 @@ export async function syncWithCloud(providedData?: {
   outflows?: CashOutflowItem[];
   customers?: Customer[];
 }): Promise<CloudSyncResult> {
-  // Si ya hay una sincronización en proceso, guardar los datos pendientes y esperar a que termine
+  // Si ya hay una sincronización en proceso, ACUMULAR y fusionar los datos pendientes
   if (isSyncInProgress) {
     hasPendingSync = true;
-    pendingProvidedData = providedData;
+    if (providedData) {
+      pendingProvidedData = {
+        tickets: mergeTickets(pendingProvidedData?.tickets || [], providedData.tickets || []),
+        orders: mergeOrders(pendingProvidedData?.orders || [], providedData.orders || []),
+        shiftCuts: mergeShiftCuts(pendingProvidedData?.shiftCuts || [], providedData.shiftCuts || []),
+        outflows: mergeOutflows(pendingProvidedData?.outflows || [], providedData.outflows || []),
+        customers: mergeCustomers(pendingProvidedData?.customers || [], providedData.customers || [])
+      };
+    }
     return {
       success: true,
       message: 'Sincronización en cola para procesar ventas inmediatas'
@@ -192,10 +208,20 @@ export async function syncWithCloud(providedData?: {
           const mergedOutflows = mergeOutflows(freshLocalOutflows, json.data.outflows || []);
           const mergedCustomers = mergeCustomers(freshLocalCustomers, json.data.customers || []);
 
-          // Guardar la versión combinada en localStorage local
-          localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
-          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
-          localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+          // Verificar si realmente cambiaron los datos respecto al localStorage local
+          const ticketsChanged = !areTicketsIdentical(freshLocalTickets, mergedTickets);
+          const ordersChanged = !areOrdersIdentical(freshLocalOrders, mergedOrders);
+          const cutsChanged = freshLocalShiftCuts.length !== mergedShiftCuts.length;
+
+          if (ticketsChanged) {
+            localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
+          }
+          if (ordersChanged) {
+            localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
+          }
+          if (cutsChanged) {
+            localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+          }
           localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
           localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
 
@@ -207,7 +233,10 @@ export async function syncWithCloud(providedData?: {
             customers: mergedCustomers
           };
 
-          notifyListeners(resultData);
+          // Solo notificar si hubo un cambio genuino para evitar loops de re-renderizado
+          if (ticketsChanged || ordersChanged || cutsChanged) {
+            notifyListeners(resultData);
+          }
 
           return {
             success: true,
@@ -234,7 +263,7 @@ export async function syncWithCloud(providedData?: {
       // Ejecutar la siguiente sincronización acumulada
       setTimeout(() => {
         syncWithCloud(nextData);
-      }, 100);
+      }, 200);
     }
   }
 }
@@ -278,9 +307,19 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
         const mergedOutflows = mergeOutflows(localOutflows, json.data.outflows || []);
         const mergedCustomers = mergeCustomers(localCustomers, json.data.customers || []);
 
-        localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
-        localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
-        localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+        const ticketsChanged = !areTicketsIdentical(localTickets, mergedTickets);
+        const ordersChanged = !areOrdersIdentical(localOrders, mergedOrders);
+        const cutsChanged = localShiftCuts.length !== mergedShiftCuts.length;
+
+        if (ticketsChanged) {
+          localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
+        }
+        if (ordersChanged) {
+          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
+        }
+        if (cutsChanged) {
+          localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+        }
         localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
         localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
 
@@ -292,7 +331,9 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
           customers: mergedCustomers
         };
 
-        notifyListeners(resultData);
+        if (ticketsChanged || ordersChanged || cutsChanged) {
+          notifyListeners(resultData);
+        }
 
         return {
           success: true,

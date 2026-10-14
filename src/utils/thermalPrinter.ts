@@ -533,19 +533,24 @@ export function printTicketDirectToPrinter(ticket: SaleTicket, settings: Setting
     const subTitleFontSize = is80 ? '11px' : '10px';
     const totalFontSize = is80 ? '16px' : '14.5px';
 
-    const itemsHtml = ticket.items
+    const itemsHtml = (ticket.items || [])
       .map(
-        (it) => `
+        (it) => {
+          const qty = it.quantity || 1;
+          const priceNum = typeof it.price === 'number' ? it.price : (parseFloat(it.price as any) || 0);
+          const totalNum = typeof it.total === 'number' ? it.total : (qty * priceNum);
+          return `
       <div style="margin-bottom: 2px;">
         <div style="display: flex; justify-content: space-between; font-size: ${baseFontSize}; font-weight: 900; align-items: baseline;">
-          <span style="overflow: hidden; text-overflow: ellipsis; padding-right: 2px;">${it.quantity}x $${it.price.toFixed(it.price % 1 !== 0 ? 2 : 0)}</span>
-          <span style="flex-shrink: 0; white-space: nowrap; text-align: right;">$${it.total.toFixed(2)}</span>
+          <span style="overflow: hidden; text-overflow: ellipsis; padding-right: 2px;">${qty}x $${priceNum.toFixed(priceNum % 1 !== 0 ? 2 : 0)}</span>
+          <span style="flex-shrink: 0; white-space: nowrap; text-align: right;">$${totalNum.toFixed(2)}</span>
         </div>
         <div style="font-size: ${subTitleFontSize}; font-weight: 800; padding-left: 4px; color: #111; line-height: 1.15;">
-          ${it.name}
+          ${it.name || 'Pan'}
         </div>
       </div>
-    `
+    `;
+        }
       )
       .join('');
 
@@ -766,17 +771,29 @@ export function printTicketDirectToPrinter(ticket: SaleTicket, settings: Setting
           iframe.contentWindow?.print();
         } catch (printErr) {
           console.warn('Iframe print failed, falling back to window.print():', printErr);
-          window.print();
+          try {
+            window.print();
+          } catch {
+            // silent fallback
+          }
         }
       }, 150);
       return true;
     } else {
-      window.print();
+      try {
+        window.print();
+      } catch {
+        // silent fallback
+      }
       return true;
     }
   } catch (e) {
     console.error('Error in printTicketDirectToPrinter:', e);
-    window.print();
+    try {
+      window.print();
+    } catch {
+      // silent fallback
+    }
     return false;
   }
 }

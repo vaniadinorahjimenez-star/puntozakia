@@ -46,6 +46,7 @@ import {
 import { playCashSound, playBeep } from '../utils/audio';
 import { ThermalTicket } from './ThermalTicket';
 import { CashShiftCutModal } from './ShiftCut/CashShiftCutModal';
+import { HeartBreadCelebration } from './HeartBreadCelebration';
 import { VoiceAssistantModal } from './VoiceAssistant/VoiceAssistantModal';
 import { VoiceCommandItem } from '../utils/voiceAssistant';
 
@@ -105,6 +106,12 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   const [showVoiceAssistantModal, setShowVoiceAssistantModal] = useState<boolean>(false);
   const [isMobileVoiceListening, setIsMobileVoiceListening] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<string>('');
+  const [celebrationData, setCelebrationData] = useState<{
+    total: number;
+    folio: string;
+    piecesCount: number;
+    customerName?: string;
+  } | null>(null);
 
   const handleAddVoiceItems = (voiceItems: VoiceCommandItem[]) => {
     if (!voiceItems || voiceItems.length === 0) return;
@@ -248,6 +255,12 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     };
 
     onSaveTicket(newTicket);
+    setCelebrationData({
+      total: totalAmount,
+      folio: nextFolio,
+      piecesCount: totalPieces,
+      customerName: 'Público en Mostrador'
+    });
     setTicketItems([]);
     setMultiplier(1);
 
@@ -858,6 +871,17 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         />
       )}
 
+      {/* Smiling Donut Celebration Modal (Animación de la donita sonriente) */}
+      {celebrationData && (
+        <HeartBreadCelebration
+          total={celebrationData.total}
+          folio={celebrationData.folio}
+          piecesCount={celebrationData.piecesCount}
+          customerName={celebrationData.customerName}
+          onClose={() => setCelebrationData(null)}
+        />
+      )}
+
       {/* Voice Assistant Modal for Mobile */}
       <VoiceAssistantModal
         isOpen={showVoiceAssistantModal}
@@ -867,7 +891,14 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         }}
         onAddItemsToTicket={handleAddVoiceItems}
         currentTicketCount={ticketItems.length}
+        currentTicketTotal={totalAmount}
         onListeningStateChange={setIsMobileVoiceListening}
+        onTriggerCheckout={() => {
+          handleCheckout('efectivo');
+        }}
+        onTriggerCardCheckout={() => {
+          handleCheckout('tarjeta');
+        }}
       />
 
     </div>

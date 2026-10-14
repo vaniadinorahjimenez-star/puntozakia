@@ -244,6 +244,14 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({
   const [startDate, setStartDate] = useState<string>(todayStr);
   const [endDate, setEndDate] = useState<string>(todayStr);
 
+  // Mantener selectedDate sincronizado cuando entran nuevas ventas hoy
+  useEffect(() => {
+    const hasToday = tickets.some(t => getTicketDate(t) === todayStr);
+    if (hasToday && dateFilterMode === 'hoy') {
+      setSelectedDate(todayStr);
+    }
+  }, [tickets, todayStr, dateFilterMode]);
+
   // Cloud sync status timer
   const [cloudSyncInfo, setCloudSyncInfo] = useState<{ status: string; lastSyncTime: number; pendingCount: number }>(getCloudSyncStatus());
   const [timeAgoStr, setTimeAgoStr] = useState<string>('En vivo');

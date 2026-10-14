@@ -414,9 +414,11 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
             });
             return;
           }
+          return;
+        }
 
-          // Voice Assistant Endpoint for Punto Zákia - Panadería Santa Fe with Cumulative Session State
-          if (req.url && (req.url.startsWith('/api/voice-assistant') || req.url.startsWith('/.netlify/functions/voice-assistant'))) {
+        // Voice Assistant Endpoint for Punto Zákia - Panadería Santa Fe with Cumulative Session State
+        if (req.url && (req.url.startsWith('/api/voice-assistant') || req.url.startsWith('/.netlify/functions/voice-assistant'))) {
             if (req.method === 'OPTIONS') {
               res.writeHead(204, {
                 'Access-Control-Allow-Origin': '*',
@@ -775,7 +777,6 @@ Devuelve: { "items": [{ "cantidad": 2, "concepto": "Pieza $5", "precio_unitario"
             });
             return;
           }
-        }
         next();
       });
     }
