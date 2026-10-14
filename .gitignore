@@ -1,8 +1,29 @@
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Production builds
 build/
 dist/
 coverage/
-.DS_Store
+
+# Logs and system files
 *.log
-.env*
+.DS_Store
+*.pem
+
+# Environment variables & secrets (NEVER commit to GitHub)
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 !.env.example
+
+# Firebase configuration files & local caches
+firebase-applet-config.json
+.firebase/
+firestore-debug.log
+firebase-debug.log

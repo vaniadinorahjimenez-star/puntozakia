@@ -30,9 +30,9 @@ function clipNetlifyFunctionDevPlugin(): Plugin {
                 try { payload = JSON.parse(bodyStr); } catch (e) {}
               }
 
-              const defaultApiKey = '44a3f5bb-52dc-48bd-8f14-fcf75b7cddee';
-              const defaultSecretKey = '376ed357-eff3-4e80-a67e-a1f562ac18d9';
-              const defaultSerial = 'P8C2240805000156';
+              const defaultApiKey = process.env.CLIP_API_KEY || process.env.VITE_CLIP_API_KEY || '';
+              const defaultSecretKey = process.env.CLIP_SECRET_KEY || process.env.VITE_CLIP_SECRET_KEY || '';
+              const defaultSerial = process.env.CLIP_TERMINAL_SERIAL || process.env.VITE_CLIP_SERIAL || 'P8C2240805000156';
 
               const rawApiKey = payload.api_key || process.env.CLIP_API_KEY || process.env.CLIP_KEY || defaultApiKey;
               const rawSecretKey = payload.secret_key || process.env.CLIP_SECRET_KEY || process.env.CLIP_SECRET || defaultSecretKey;

@@ -38,10 +38,10 @@ export interface ClipPaymentResult {
 }
 
 const STORAGE_KEY = 'bakery_clip_terminal_config';
-export const DEFAULT_CLIP_SERIAL = 'P8C2240805000156';
+export const DEFAULT_CLIP_SERIAL = (import.meta.env.VITE_CLIP_SERIAL as string) || 'P8C2240805000156';
 export const DEFAULT_CLIP_ALIAS = 'Clip Total 2';
-export const DEFAULT_CLIP_API_KEY = '44a3f5bb-52dc-48bd-8f14-fcf75b7cddee';
-export const DEFAULT_CLIP_SECRET_KEY = '376ed357-eff3-4e80-a67e-a1f562ac18d9';
+export const DEFAULT_CLIP_API_KEY = (import.meta.env.VITE_CLIP_API_KEY as string) || '';
+export const DEFAULT_CLIP_SECRET_KEY = (import.meta.env.VITE_CLIP_SECRET_KEY as string) || '';
 
 // Obtener configuración guardada de la terminal Clip en el navegador
 export function getStoredClipConfig(): ClipConfig {
