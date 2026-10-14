@@ -1,0 +1,177 @@
+{
+  "entities": {
+    "Ticket": {
+      "title": "Sale Ticket",
+      "description": "Registered sale ticket at Punto Zákia bakery counter",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "folio": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 32 },
+        "time": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 32 },
+        "amountPaid": { "type": "number" },
+        "change": { "type": "number" },
+        "cashier": { "type": "string", "maxLength": 128 },
+        "shift": { "type": "string", "maxLength": 32 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "customerPhone": { "type": "string", "maxLength": 32 },
+        "pointsEarned": { "type": "number" },
+        "pointsRedeemed": { "type": "number" },
+        "cardTerminal": { "type": "string", "maxLength": 64 },
+        "cardAuthCode": { "type": "string", "maxLength": 64 },
+        "cardReference": { "type": "string", "maxLength": 64 },
+        "cardLast4": { "type": "string", "maxLength": 16 }
+      },
+      "required": ["id", "folio", "total", "paymentMethod"]
+    },
+    "Order": {
+      "title": "Bakery Order",
+      "description": "Special order or route delivery order for Panadería Santa Fe",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "folio": { "type": "string", "maxLength": 64 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "customerPhone": { "type": "string", "maxLength": 32 },
+        "deliveryType": { "type": "string", "maxLength": 64 },
+        "deliveryDate": { "type": "string", "maxLength": 32 },
+        "deliveryTime": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "deposit": { "type": "number" },
+        "pendingAmount": { "type": "number" },
+        "paymentStatus": { "type": "string", "maxLength": 32 },
+        "assignedDriverId": { "type": "string", "maxLength": 64 },
+        "deliveryStatus": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "folio", "customerName", "total", "paymentStatus"]
+    },
+    "ShiftCut": {
+      "title": "Shift Cut Record",
+      "description": "Cash register balance and cash cut per shift",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "folio": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 32 },
+        "time": { "type": "string", "maxLength": 32 },
+        "cashierName": { "type": "string", "maxLength": 128 },
+        "shiftName": { "type": "string", "maxLength": 64 },
+        "initialCash": { "type": "number" },
+        "totalGrossSales": { "type": "number" },
+        "totalCashSales": { "type": "number" },
+        "totalCardSales": { "type": "number" },
+        "totalPieces": { "type": "number" },
+        "ticketsCount": { "type": "number" },
+        "totalOutflows": { "type": "number" },
+        "expectedCashInDrawer": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "folio", "date", "cashierName", "expectedCashInDrawer"]
+    },
+    "CashOutflow": {
+      "title": "Cash Outflow",
+      "description": "Expense or supplier cash payout from cashier drawer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "concept": { "type": "string", "maxLength": 256 },
+        "amount": { "type": "number" },
+        "time": { "type": "string", "maxLength": 32 },
+        "recipient": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "concept", "amount"]
+    },
+    "Customer": {
+      "title": "Customer Loyalty Record",
+      "description": "Customer loyalty program profile and accumulated points",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "points": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "visitsCount": { "type": "number" },
+        "lastVisit": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "Product": {
+      "title": "Bread Product",
+      "description": "Bakery catalog item and unit price",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "price": { "type": "number" },
+        "category": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "price"]
+    },
+    "BakerySettings": {
+      "title": "Bakery Settings",
+      "description": "Store configuration, phone, header and printer preferences",
+      "type": "object",
+      "properties": {
+        "bakeryName": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "address": { "type": "string", "maxLength": 256 },
+        "ticketFooter": { "type": "string", "maxLength": 256 },
+        "ticketPaperWidth": { "type": "string", "maxLength": 16 }
+      },
+      "required": ["bakeryName"]
+    },
+    "TestConnection": {
+      "title": "Test Connection",
+      "description": "Probe document for health checking Firestore connectivity",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 32 }
+      }
+    }
+  },
+  "firestore": {
+    "/tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/Ticket" },
+      "description": "Collection of sale tickets registered at the counter"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Collection of orders for home delivery and store pickups"
+    },
+    "/shiftCuts/{shiftCutId}": {
+      "schema": { "$ref": "#/entities/ShiftCut" },
+      "description": "Collection of shift cuts and drawer balances"
+    },
+    "/outflows/{outflowId}": {
+      "schema": { "$ref": "#/entities/CashOutflow" },
+      "description": "Collection of cashier cash disbursements"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Collection of registered customer loyalty profiles"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Bakery bread and dairy product catalog"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/BakerySettings" },
+      "description": "POS store configurations"
+    },
+    "/test/{testId}": {
+      "schema": { "$ref": "#/entities/TestConnection" },
+      "description": "Health check document"
+    }
+  }
+}

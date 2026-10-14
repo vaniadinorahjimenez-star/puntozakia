@@ -31,6 +31,8 @@ interface NavbarProps {
   pendingDeliveriesCount: number;
   zoomLevel: number;
   onToggleZoom: (delta: number) => void;
+  isFirebaseConnected?: boolean;
+  cloudTicketsCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -41,7 +43,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   pendingProductionCount,
   pendingDeliveriesCount,
   zoomLevel,
-  onToggleZoom
+  onToggleZoom,
+  isFirebaseConnected = false,
+  cloudTicketsCount = 0
 }) => {
   const [currentTime, setCurrentTime] = React.useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
@@ -176,6 +180,21 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right: Desplegable Menu Button, Clock & Quick Controls */}
         <div className="flex items-center space-x-2 sm:space-x-3">
           
+          {/* Indicador de conexión a Base de Datos Firebase en la Nube */}
+          <div 
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border shadow-2xs transition-all ${
+              isFirebaseConnected 
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}
+            title={isFirebaseConnected ? `Firebase Firestore conectado en la nube (${cloudTicketsCount} tickets guardados)` : 'Conectando con Firebase Firestore en la nube...'}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isFirebaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+            <span className="text-[11px] font-bold tracking-tight">
+              {isFirebaseConnected ? 'Firebase Conectado' : 'Conectando Nube...'}
+            </span>
+          </div>
+
           {/* Botón Micrófono de Asistente de Voz al lado del botón Módulos */}
           <button
             id="navbar-voice-toggle-btn"

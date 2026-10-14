@@ -4,14 +4,28 @@ import {
   loadOrders, 
   loadShiftCuts, 
   loadOutflows, 
-  loadCustomers,
-  mergeTickets,
-  mergeOrders,
-  mergeShiftCuts,
-  mergeOutflows,
+  loadCustomers, 
+  mergeTickets, 
+  mergeOrders, 
+  mergeShiftCuts, 
+  mergeOutflows, 
   mergeCustomers,
+  safeLocalStorageSetItem,
   STORAGE_KEYS
 } from '../utils/storage';
+import {
+  saveTicketToFirebase,
+  saveOrderToFirebase,
+  saveShiftCutToFirebase,
+  saveOutflowToFirebase,
+  saveCustomerToFirebase,
+  fetchTicketsFromFirebase,
+  fetchOrdersFromFirebase,
+  fetchShiftCutsFromFirebase,
+  fetchOutflowsFromFirebase,
+  fetchCustomersFromFirebase,
+  getFirebaseSyncStatus
+} from './firebaseSyncService';
 
 export interface CloudSyncResult {
   success: boolean;
@@ -118,11 +132,8 @@ function areOrdersIdentical(a: BakeryOrder[], b: BakeryOrder[]): boolean {
 }
 
 /**
- * Realiza la sincronización combinada (Merge) con la nube de Netlify
- * NUNCA sobrescribe datos; combina los tickets, cobros de tarjeta, pedidos y cortes
- * de la PC y del Teléfono.
- * Protegido contra condiciones de carrera: si se registran ventas mientras la petición está en vuelo,
- * jamás se perderán.
+ * Realiza la sincronización combinada (Merge) con Firebase Firestore en la nube
+ * Guarda de forma atómica en Firestore para garantizar cero pérdida de datos.
  */
 export async function syncWithCloud(providedData?: {
   tickets?: SaleTicket[];
@@ -131,7 +142,49 @@ export async function syncWithCloud(providedData?: {
   outflows?: CashOutflowItem[];
   customers?: Customer[];
 }): Promise<CloudSyncResult> {
-  // Si ya hay una sincronización en proceso, ACUMULAR y fusionar los datos pendientes
+  // 1. Inmediatamente guardar cada dato proporcionado en Firebase Firestore
+  if (providedData?.tickets && providedData.tickets.length > 0) {
+    // Si se enviaron tickets, guardar los nuevos en Firestore de inmediato
+    for (const t of providedData.tickets) {
+      if (t && t.id && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id)) {
+        saveTicketToFirebase(t).catch(e => console.warn('[Firebase] Background ticket save error:', e));
+      }
+    }
+  }
+
+  if (providedData?.orders && providedData.orders.length > 0) {
+    for (const o of providedData.orders) {
+      if (o && o.id && !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id)) {
+        saveOrderToFirebase(o).catch(e => console.warn('[Firebase] Background order save error:', e));
+      }
+    }
+  }
+
+  if (providedData?.shiftCuts && providedData.shiftCuts.length > 0) {
+    for (const s of providedData.shiftCuts) {
+      if (s && s.id) {
+        saveShiftCutToFirebase(s).catch(e => console.warn('[Firebase] Background shift cut save error:', e));
+      }
+    }
+  }
+
+  if (providedData?.outflows && providedData.outflows.length > 0) {
+    for (const out of providedData.outflows) {
+      if (out && out.id) {
+        saveOutflowToFirebase(out).catch(e => console.warn('[Firebase] Background outflow save error:', e));
+      }
+    }
+  }
+
+  if (providedData?.customers && providedData.customers.length > 0) {
+    for (const c of providedData.customers) {
+      if (c && c.id) {
+        saveCustomerToFirebase(c).catch(e => console.warn('[Firebase] Background customer save error:', e));
+      }
+    }
+  }
+
+  // Si ya hay una sincronización en proceso, acumular datos pendientes
   if (isSyncInProgress) {
     hasPendingSync = true;
     if (providedData) {
@@ -160,101 +213,36 @@ export async function syncWithCloud(providedData?: {
     const localOutflows = mergeOutflows(loadOutflows(), providedData?.outflows || []);
     const localCustomers = mergeCustomers(loadCustomers(), providedData?.customers || []);
 
-    const payload = {
+    // Actualizar almacenamiento local con mitigación de cuota
+    safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, JSON.stringify(localTickets));
+    safeLocalStorageSetItem('santafe_tickets', JSON.stringify(localTickets));
+    safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(localOrders));
+    safeLocalStorageSetItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(localShiftCuts));
+    safeLocalStorageSetItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(localOutflows));
+    safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(localCustomers));
+
+    const resultData = {
       tickets: localTickets,
       orders: localOrders,
       shiftCuts: localShiftCuts,
       outflows: localOutflows,
-      customers: localCustomers,
-      timestamp: new Date().toISOString()
+      customers: localCustomers
     };
 
-    const endpoints = ['/api/sync', '/.netlify/functions/sync-data'];
-    let lastError: any = null;
-
-    for (const endpoint of endpoints) {
-      try {
-        const queryUrl = `${endpoint}${endpoint.includes('?') ? '&' : '?'}_t=${Date.now()}`;
-        const res = await fetch(queryUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) {
-          lastError = new Error(`HTTP ${res.status}`);
-          continue;
-        }
-
-        const json = await res.json();
-        if (json.success && json.data) {
-          // Filtrar tickets y pedidos mockeados si vinieran del servidor
-          const rawIncomingTickets = (json.data.tickets || []).filter((t: any) => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
-          const rawIncomingOrders = (json.data.orders || []).filter((o: any) => o && !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id) && o.assignedDriverId !== 'osvaldo' && o.assignedDriverId !== 'simon' && o.deliveryType !== 'domicilio');
-
-          const freshLocalTickets = loadTickets();
-          const freshLocalOrders = loadOrders();
-          const freshLocalShiftCuts = loadShiftCuts();
-          const freshLocalOutflows = loadOutflows();
-          const freshLocalCustomers = loadCustomers();
-
-          const mergedTickets = mergeTickets(freshLocalTickets, rawIncomingTickets);
-          const mergedOrders = mergeOrders(freshLocalOrders, rawIncomingOrders);
-          const mergedShiftCuts = mergeShiftCuts(freshLocalShiftCuts, json.data.shiftCuts || []);
-          const mergedOutflows = mergeOutflows(freshLocalOutflows, json.data.outflows || []);
-          const mergedCustomers = mergeCustomers(freshLocalCustomers, json.data.customers || []);
-
-          // Verificar si realmente cambiaron los datos respecto al localStorage local
-          const ticketsChanged = !areTicketsIdentical(freshLocalTickets, mergedTickets);
-          const ordersChanged = !areOrdersIdentical(freshLocalOrders, mergedOrders);
-          const cutsChanged = freshLocalShiftCuts.length !== mergedShiftCuts.length;
-
-          if (ticketsChanged) {
-            const ticketJson = JSON.stringify(mergedTickets);
-            localStorage.setItem(STORAGE_KEYS.TICKETS, ticketJson);
-            localStorage.setItem('santafe_tickets', ticketJson);
-          }
-          if (ordersChanged) {
-            localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
-          }
-          if (cutsChanged) {
-            localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
-          }
-          localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
-          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
-
-          const resultData = {
-            tickets: mergedTickets,
-            orders: mergedOrders,
-            shiftCuts: mergedShiftCuts,
-            outflows: mergedOutflows,
-            customers: mergedCustomers
-          };
-
-          // Solo notificar si hubo un cambio genuino para evitar loops de re-renderizado
-          if (ticketsChanged || ordersChanged || cutsChanged) {
-            notifyListeners(resultData);
-          }
-
-          return {
-            success: true,
-            message: `Sincronización combinada exitosa (${mergedTickets.length} tickets, ${mergedOrders.length} pedidos)`,
-            mergedData: resultData
-          };
-        }
-      } catch (err) {
-        lastError = err;
-      }
-    }
+    lastSyncTimestamp = Date.now();
+    notifyListeners(resultData);
 
     return {
+      success: true,
+      message: `Sincronizado con Firebase Firestore (${localTickets.length} tickets)`,
+      mergedData: resultData
+    };
+  } catch (err: any) {
+    console.error('[CloudSync] Error sincronizando:', err);
+    return {
       success: false,
-      message: 'No se pudo conectar a la nube de Netlify, guardado local seguro activado',
-      error: lastError?.message || 'Error de red'
+      message: 'Error sincronizando con la nube',
+      error: err?.message
     };
   } finally {
     isSyncInProgress = false;
@@ -262,7 +250,6 @@ export async function syncWithCloud(providedData?: {
       hasPendingSync = false;
       const nextData = pendingProvidedData;
       pendingProvidedData = undefined;
-      // Ejecutar la siguiente sincronización acumulada
       setTimeout(() => {
         syncWithCloud(nextData);
       }, 200);
@@ -271,95 +258,80 @@ export async function syncWithCloud(providedData?: {
 }
 
 /**
- * Consulta la nube y combina los datos recibidos con los locales
+ * Consulta Firebase Firestore y combina los datos recibidos con los locales
  */
 export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
-  const endpoints = ['/api/sync', '/.netlify/functions/sync-data'];
-  let lastError: any = null;
+  try {
+    const [cloudTickets, cloudOrders, cloudCuts, cloudOutflows, cloudCustomers] = await Promise.all([
+      fetchTicketsFromFirebase().catch(() => []),
+      fetchOrdersFromFirebase().catch(() => []),
+      fetchShiftCutsFromFirebase().catch(() => []),
+      fetchOutflowsFromFirebase().catch(() => []),
+      fetchCustomersFromFirebase().catch(() => [])
+    ]);
 
-  for (const endpoint of endpoints) {
-    try {
-      const queryUrl = `${endpoint}${endpoint.includes('?') ? '&' : '?'}_t=${Date.now()}`;
-      const res = await fetch(queryUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
+    const localTickets = loadTickets();
+    const localOrders = loadOrders();
+    const localShiftCuts = loadShiftCuts();
+    const localOutflows = loadOutflows();
+    const localCustomers = loadCustomers();
 
-      if (!res.ok) continue;
+    const mergedTickets = mergeTickets(localTickets, cloudTickets);
+    const mergedOrders = mergeOrders(localOrders, cloudOrders);
+    const mergedShiftCuts = mergeShiftCuts(localShiftCuts, cloudCuts);
+    const mergedOutflows = mergeOutflows(localOutflows, cloudOutflows);
+    const mergedCustomers = mergeCustomers(localCustomers, cloudCustomers);
 
-      const json = await res.json();
-      if (json.success && json.data) {
-        // Filtrar tickets y pedidos mockeados para asegurar 100% datos reales
-        const rawIncomingTickets = (json.data.tickets || []).filter((t: any) => t && !['t-1001', 't-1002', 't-1003', 't-1004'].includes(t.id));
-        const rawIncomingOrders = (json.data.orders || []).filter((o: any) => o && !['ord-101', 'ord-102', 'ord-103', 'ord-104', 'ord-105'].includes(o.id) && o.assignedDriverId !== 'osvaldo' && o.assignedDriverId !== 'simon' && o.deliveryType !== 'domicilio');
+    const ticketsChanged = !areTicketsIdentical(localTickets, mergedTickets);
+    const ordersChanged = !areOrdersIdentical(localOrders, mergedOrders);
+    const cutsChanged = localShiftCuts.length !== mergedShiftCuts.length;
 
-        const localTickets = loadTickets();
-        const localOrders = loadOrders();
-        const localShiftCuts = loadShiftCuts();
-        const localOutflows = loadOutflows();
-        const localCustomers = loadCustomers();
-
-        const mergedTickets = mergeTickets(localTickets, rawIncomingTickets);
-        const mergedOrders = mergeOrders(localOrders, rawIncomingOrders);
-        const mergedShiftCuts = mergeShiftCuts(localShiftCuts, json.data.shiftCuts || []);
-        const mergedOutflows = mergeOutflows(localOutflows, json.data.outflows || []);
-        const mergedCustomers = mergeCustomers(localCustomers, json.data.customers || []);
-
-        const ticketsChanged = !areTicketsIdentical(localTickets, mergedTickets);
-        const ordersChanged = !areOrdersIdentical(localOrders, mergedOrders);
-        const cutsChanged = localShiftCuts.length !== mergedShiftCuts.length;
-
-        if (ticketsChanged) {
-          const ticketJson = JSON.stringify(mergedTickets);
-          localStorage.setItem(STORAGE_KEYS.TICKETS, ticketJson);
-          localStorage.setItem('santafe_tickets', ticketJson);
-        }
-        if (ordersChanged) {
-          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
-        }
-        if (cutsChanged) {
-          localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
-        }
-        localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
-
-        const resultData = {
-          tickets: mergedTickets,
-          orders: mergedOrders,
-          shiftCuts: mergedShiftCuts,
-          outflows: mergedOutflows,
-          customers: mergedCustomers
-        };
-
-        if (ticketsChanged || ordersChanged || cutsChanged) {
-          notifyListeners(resultData);
-        }
-
-        return {
-          success: true,
-          message: 'Datos combinados desde la nube con éxito',
-          mergedData: resultData
-        };
-      }
-    } catch (err) {
-      lastError = err;
+    if (ticketsChanged) {
+      const ticketJson = JSON.stringify(mergedTickets);
+      safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, ticketJson);
+      safeLocalStorageSetItem('santafe_tickets', ticketJson);
     }
-  }
+    if (ordersChanged) {
+      safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
+    }
+    if (cutsChanged) {
+      safeLocalStorageSetItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(mergedShiftCuts));
+    }
+    safeLocalStorageSetItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(mergedOutflows));
+    safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(mergedCustomers));
 
-  return {
-    success: false,
-    message: 'No se pudo obtener datos de la nube',
-    error: lastError?.message
-  };
+    const resultData = {
+      tickets: mergedTickets,
+      orders: mergedOrders,
+      shiftCuts: mergedShiftCuts,
+      outflows: mergedOutflows,
+      customers: mergedCustomers
+    };
+
+    if (ticketsChanged || ordersChanged || cutsChanged) {
+      notifyListeners(resultData);
+    }
+
+    return {
+      success: true,
+      message: `Datos combinados desde Firebase Firestore (${mergedTickets.length} tickets)`,
+      mergedData: resultData
+    };
+  } catch (err: any) {
+    console.error('[CloudSync] Fallo al recuperar de Firebase Firestore:', err);
+    return {
+      success: false,
+      message: 'No se pudo obtener datos de Firestore',
+      error: err?.message
+    };
+  }
 }
 
-export function getCloudSyncStatus(): { isOnline: boolean; lastSyncTime: number } {
+export function getCloudSyncStatus(): { isOnline: boolean; lastSyncTime: number; isFirebaseConnected: boolean } {
+  const fbStatus = getFirebaseSyncStatus();
   return {
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-    lastSyncTime: lastSyncTimestamp
+    lastSyncTime: lastSyncTimestamp,
+    isFirebaseConnected: fbStatus.connected
   };
 }

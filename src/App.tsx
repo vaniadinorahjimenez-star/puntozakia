@@ -31,6 +31,7 @@ import {
   mergeTickets,
   mergeOrders,
   mergeCustomers,
+  safeLocalStorageSetItem,
   STORAGE_KEYS,
   DEFAULT_SETTINGS,
   DEFAULT_PRODUCTS,
@@ -40,6 +41,18 @@ import {
   INITIAL_TICKETS,
   getTodayString
 } from './utils/storage';
+import { testConnection } from './firebase/config';
+import {
+  migrateLocalDataToFirebase,
+  listenToFirebaseTickets,
+  listenToFirebaseOrders,
+  saveTicketToFirebase,
+  saveOrderToFirebase,
+  saveCustomerToFirebase,
+  onFirebaseStatusChange,
+  getFirebaseSyncStatus,
+  FirebaseSyncStatus
+} from './services/firebaseSyncService';
 import { Navbar, ActiveTabType } from './components/Navbar';
 import { PosCounter } from './components/PosCounter/PosCounter';
 import { OrdersManager } from './components/Orders/OrdersManager';
@@ -77,8 +90,10 @@ export default function App() {
   });
 
   // Accessibility Zoom Level (-1, 0, 1, 2)
-  // Accessibility Zoom Level (-1, 0, 1, 2)
   const [zoomLevel, setZoomLevel] = useState<number>(0);
+
+  // Firebase Real-time Cloud Connection State
+  const [firebaseStatus, setFirebaseStatus] = useState<FirebaseSyncStatus>(getFirebaseSyncStatus);
 
   // Persistence effects (only save to local storage when state changes)
   useEffect(() => {
@@ -97,12 +112,48 @@ export default function App() {
     saveDriverCustomers(driverCustomers);
   }, [driverCustomers]);
 
-  // Cloud Synchronization: Combina en tiempo real entre Computadora y Teléfono
+  // Cloud Synchronization: Combina en tiempo real entre Computadora y Teléfono usando Firebase Firestore
   useEffect(() => {
     let isMounted = true;
 
+    // 1. Probar conexión inicial a Firebase Firestore (regla de validación)
+    testConnection().then(ok => {
+      if (ok) {
+        console.log('[Firebase] Firestore conectado y listo para recibir ventas.');
+      }
+    });
+
+    // 2. Suscribirse a cambios de estado de Firebase
+    const unsubStatus = onFirebaseStatusChange(setFirebaseStatus);
+
+    // 3. Migración transparente de datos locales existentes a la base en la nube
+    migrateLocalDataToFirebase().then(res => {
+      if (res.success && res.migratedTicketsCount > 0) {
+        console.log(`[Firebase] ${res.migratedTicketsCount} tickets respaldados con éxito en Firestore.`);
+      }
+    });
+
+    // 4. Escuchar ventas de tickets en tiempo real desde Firebase Firestore
+    const unsubTickets = listenToFirebaseTickets((cloudTickets) => {
+      if (!isMounted) return;
+      setTickets(prev => {
+        if (prev.length === cloudTickets.length && prev[0]?.id === cloudTickets[0]?.id) {
+          return prev;
+        }
+        return mergeTickets(prev, cloudTickets);
+      });
+    });
+
+    // 5. Escuchar pedidos en tiempo real desde Firebase Firestore
+    const unsubOrders = listenToFirebaseOrders((cloudOrders) => {
+      if (!isMounted) return;
+      setOrders(prev => {
+        if (prev.length === cloudOrders.length) return prev;
+        return mergeOrders(prev, cloudOrders);
+      });
+    });
+
     const pullAndApplyCloud = async () => {
-      // Si la pestaña está oculta, evitar gasto innecesario de recursos
       if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const res = await fetchAndMergeCloud();
@@ -137,10 +188,9 @@ export default function App() {
       }
     };
 
-    // 1. Descargar y combinar datos existentes en la nube al abrir la app
+    // Descargar datos combinados al abrir
     pullAndApplyCloud();
 
-    // 2. Escuchar actualizaciones de la nube y reflejarlas en el estado (solo si hay cambios reales)
     const unsubscribe = onCloudSyncUpdated((merged) => {
       if (!isMounted) return;
       if (merged.tickets) {
@@ -165,7 +215,7 @@ export default function App() {
       }
     });
 
-    // 3. Sincronizar entre pestañas abiertas en el mismo dispositivo
+    // Sincronizar entre pestañas abiertas en el mismo dispositivo
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'santafe_tickets') {
         const fresh = loadTickets();
@@ -178,12 +228,10 @@ export default function App() {
     };
     window.addEventListener('storage', handleStorageChange);
 
-    // 4. Chequeo periódico en segundo plano optimizado (cada 12 segundos para máxima velocidad y 0 lags)
     const syncInterval = setInterval(() => {
       pullAndApplyCloud();
-    }, 12000);
+    }, 15000);
 
-    // 5. Al regresar a la pestaña o prender la pantalla del celular, actualizar de inmediato
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         pullAndApplyCloud();
@@ -195,6 +243,9 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      unsubStatus();
+      unsubTickets();
+      unsubOrders();
       unsubscribe();
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('focus', handleVisibilityOrFocus);
@@ -204,20 +255,24 @@ export default function App() {
     };
   }, []);
 
-  // Handlers con guardado atómico inmediato
+  // Handlers con guardado atómico inmediato en Firebase Firestore y mitigación local
   const handleSaveTicket = (newTicket: SaleTicket, updatedCustomer?: Customer) => {
-    // 1. Guardar de forma SÍNCRONA e inmediata en localStorage antes de cualquier otra cosa
+    // 1. Guardar de forma directa en Firebase Firestore (nube permanente)
+    saveTicketToFirebase(newTicket).catch(e => console.warn('Error guardando en Firestore:', e));
+
+    // 2. Guardar en memoria/caché local con protección de cuota
     const currentTickets = loadTickets();
     const merged = mergeTickets([newTicket], currentTickets);
     const jsonStr = JSON.stringify(merged);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, jsonStr);
-    localStorage.setItem('santafe_tickets', jsonStr);
+    safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, jsonStr);
+    safeLocalStorageSetItem('santafe_tickets', jsonStr);
 
-    // 2. Actualizar estado de React functionalmente asegurando que newTicket esté al inicio
+    // 3. Actualizar estado de React functionalmente asegurando que newTicket esté al inicio
     setTickets(merged);
 
     let nextCustomers: Customer[] | undefined;
     if (updatedCustomer) {
+      saveCustomerToFirebase(updatedCustomer).catch(e => console.warn('Error guardando cliente en Firestore:', e));
       setCustomers(prev => {
         const idx = prev.findIndex(c => c.id === updatedCustomer.id || c.phone === updatedCustomer.phone);
         let updatedList: Customer[];
@@ -227,20 +282,21 @@ export default function App() {
         } else {
           updatedList = [updatedCustomer, ...prev];
         }
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
+        safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(updatedList));
         nextCustomers = updatedList;
         return updatedList;
       });
     }
 
-    // 3. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
+    // 4. Notificar inmediatamente a todas las otras pestañas/ventanas abiertas por BroadcastChannel
     broadcastRealtimeSale(newTicket);
 
-    // 4. Disparar sincronización inmediata con la nube con los datos frescos
+    // 5. Disparar sincronización inmediata con la nube con los datos frescos
     syncWithCloud({ tickets: merged, customers: nextCustomers || (updatedCustomer ? [updatedCustomer] : undefined) });
   };
 
   const handleUpdateTicket = (updatedTicket: SaleTicket) => {
+    saveTicketToFirebase(updatedTicket).catch(e => console.warn('Error actualizando ticket en Firestore:', e));
     setTickets(prev => {
       const updated = prev.map(t => (t.id === updatedTicket.id ? updatedTicket : t));
       saveTickets(updated, true);
@@ -257,21 +313,29 @@ export default function App() {
   };
 
   const handleRegisterCustomer = (newCustomer: Customer) => {
+    saveCustomerToFirebase(newCustomer).catch(e => console.warn('Error guardando cliente en Firestore:', e));
     setCustomers(prev => [newCustomer, ...prev]);
+    syncWithCloud({ customers: [newCustomer, ...customers] });
   };
 
   const handleUpdateCustomer = (updatedCustomer: Customer) => {
+    saveCustomerToFirebase(updatedCustomer).catch(e => console.warn('Error actualizando cliente en Firestore:', e));
     setCustomers(prev =>
       prev.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c))
     );
+    syncWithCloud({ customers: customers.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c)) });
   };
 
   const handleSaveOrder = (newOrder: BakeryOrder) => {
+    saveOrderToFirebase(newOrder).catch(e => console.warn('Error guardando pedido en Firestore:', e));
     setOrders(prev => [newOrder, ...prev]);
+    syncWithCloud({ orders: [newOrder, ...orders] });
   };
 
   const handleUpdateOrder = (updatedOrder: BakeryOrder) => {
+    saveOrderToFirebase(updatedOrder).catch(e => console.warn('Error actualizando pedido en Firestore:', e));
     setOrders(prev => prev.map(o => (o.id === updatedOrder.id ? updatedOrder : o)));
+    syncWithCloud({ orders: orders.map(o => (o.id === updatedOrder.id ? updatedOrder : o)) });
   };
 
   const handleToggleItemDone = (orderId: string, itemIdx: number) => {
@@ -365,6 +429,8 @@ export default function App() {
         pendingDeliveriesCount={pendingDeliveriesCount}
         zoomLevel={zoomLevel}
         onToggleZoom={handleToggleZoom}
+        isFirebaseConnected={firebaseStatus.connected}
+        cloudTicketsCount={firebaseStatus.totalCloudTickets || tickets.length}
       />
 
       {/* Main Content Area */}

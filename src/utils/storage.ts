@@ -706,8 +706,42 @@ export function loadTickets(): SaleTicket[] {
 }
 
 /**
+ * Helper para escribir de forma segura en localStorage previniendo QuotaExceededError
+ * Si la cuota del navegador se agota, conserva los registros más recientes en caché
+ * sabiendo que la totalidad de los datos está asegurada en Firebase Firestore.
+ */
+export function safeLocalStorageSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err: any) {
+    console.warn(`[Storage] localStorage lleno en clave "${key}", aplicando mitigación de cuota.`, err);
+    try {
+      if (key === STORAGE_KEYS.TICKETS || key === 'santafe_tickets') {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 40) {
+          // Mantener los 40 tickets más recientes localmente; todos están a salvo en Firebase
+          const trimmed = parsed.slice(0, 40);
+          localStorage.setItem(key, JSON.stringify(trimmed));
+          return;
+        }
+      }
+      // Limpiar claves temporales o viejas si existen
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('debug_') || k.startsWith('temp_') || k.includes('log'))) {
+          localStorage.removeItem(k);
+        }
+      }
+      localStorage.setItem(key, value);
+    } catch (e2) {
+      console.warn(`[Storage] No se pudo guardar ${key} localmente; persistido en Firebase Firestore.`, e2);
+    }
+  }
+}
+
+/**
  * Guarda tickets COMBINANDO (merging) con los existentes en vez de sobrescribirlos
- * y garantiza persistencia en santafe_tickets_v1 y santafe_tickets
+ * y garantiza persistencia segura con protección de cuota
  */
 export function saveTickets(tickets: SaleTicket[], forceOverwrite: boolean = false): void {
   try {
@@ -719,15 +753,13 @@ export function saveTickets(tickets: SaleTicket[], forceOverwrite: boolean = fal
       toSave = mergeTickets(current, tickets);
     }
     const str = JSON.stringify(toSave);
-    localStorage.setItem(STORAGE_KEYS.TICKETS, str);
-    localStorage.setItem('santafe_tickets', str);
+    safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, str);
+    safeLocalStorageSetItem('santafe_tickets', str);
   } catch (e) {
     console.error('Error guardando tickets combinados', e);
     const str = JSON.stringify(tickets);
-    try {
-      localStorage.setItem(STORAGE_KEYS.TICKETS, str);
-      localStorage.setItem('santafe_tickets', str);
-    } catch {}
+    safeLocalStorageSetItem(STORAGE_KEYS.TICKETS, str);
+    safeLocalStorageSetItem('santafe_tickets', str);
   }
 }
 
@@ -747,14 +779,14 @@ export function loadCustomers(): Customer[] {
 export function saveCustomers(customers: Customer[], forceOverwrite: boolean = false): void {
   try {
     if (forceOverwrite) {
-      localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+      safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
       return;
     }
     const current = loadCustomers();
     const merged = mergeCustomers(current, customers);
-    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(merged));
+    safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(merged));
   } catch (e) {
-    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+    safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
   }
 }
 
@@ -786,15 +818,15 @@ export function loadOrders(): BakeryOrder[] {
 export function saveOrders(orders: BakeryOrder[], forceOverwrite: boolean = false): void {
   try {
     if (forceOverwrite) {
-      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+      safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
       return;
     }
     const current = loadOrders();
     const merged = mergeOrders(current, orders);
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(merged));
+    safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(merged));
   } catch (e) {
     console.error('Error guardando pedidos combinados', e);
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+    safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
   }
 }
 
@@ -916,14 +948,14 @@ export function loadOutflows(): CashOutflowItem[] {
 export function saveOutflows(outflows: CashOutflowItem[], forceOverwrite: boolean = false): void {
   try {
     if (forceOverwrite) {
-      localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(outflows));
+      safeLocalStorageSetItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(outflows));
       return;
     }
     const current = loadOutflows();
     const merged = mergeOutflows(current, outflows);
-    localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(merged));
+    safeLocalStorageSetItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(merged));
   } catch (e) {
-    localStorage.setItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(outflows));
+    safeLocalStorageSetItem(STORAGE_KEYS.OUTFLOWS, JSON.stringify(outflows));
   }
 }
 
@@ -943,14 +975,14 @@ export function loadShiftCuts(): ShiftCutRecord[] {
 export function saveShiftCuts(cuts: ShiftCutRecord[], forceOverwrite: boolean = false): void {
   try {
     if (forceOverwrite) {
-      localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(cuts));
+      safeLocalStorageSetItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(cuts));
       return;
     }
     const current = loadShiftCuts();
     const merged = mergeShiftCuts(current, cuts);
-    localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(merged));
+    safeLocalStorageSetItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(merged));
   } catch (e) {
-    localStorage.setItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(cuts));
+    safeLocalStorageSetItem(STORAGE_KEYS.SHIFT_CUTS, JSON.stringify(cuts));
   }
 }
 

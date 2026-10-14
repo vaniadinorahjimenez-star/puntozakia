@@ -33,13 +33,17 @@ import {
   BookOpen,
   Wifi,
   WifiOff,
-  Terminal
+  Terminal,
+  Cloud,
+  Database,
+  CheckCircle2
 } from 'lucide-react';
 import { ClipDiagnosticTool } from './ClipDiagnosticTool';
 import { playBeep, playCashSound } from '../../utils/audio';
 import { printViaBluetooth, printViaUsbTypeB, printViaUsbSerial, printViaRawBtIntent } from '../../utils/thermalPrinter';
 import { getTodayString, getNowTimeString, loadDriverCustomers, saveDriverCustomers } from '../../utils/storage';
 import { getStoredClipConfig, saveClipConfig, diagnoseClipConnection } from '../../services/clipService';
+import { migrateLocalDataToFirebase, getFirebaseSyncStatus } from '../../services/firebaseSyncService';
 
 interface AdminSettingsProps {
   settings: Settings;
@@ -75,6 +79,8 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
   const [localDrivers, setLocalDrivers] = useState<Driver[]>(drivers);
   const [localDriverCustomers, setLocalDriverCustomers] = useState<DriverCustomer[]>(() => driverCustomers || loadDriverCustomers());
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
+  const [isMigratingFirebase, setIsMigratingFirebase] = useState<boolean>(false);
+  const [firebaseMigrateResult, setFirebaseMigrateResult] = useState<string | null>(null);
 
   // New Driver Customer Form
   const [newCustName, setNewCustName] = useState<string>('');
@@ -1613,6 +1619,84 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
                 )}
               </div>
             )}
+          </div>
+
+          {/* Base de Datos en la Nube Firebase Firestore */}
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                    <span>Base de Datos en la Nube (Google Cloud Firebase Firestore)</span>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300">
+                      EN LÍNEA
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Tus ventas, folios, pedidos y clientes se sincronizan y guardan permanentemente en la nube de Google para nunca perder datos.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs text-slate-600">
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase">Estado de la Base:</span>
+                <strong className="text-emerald-700 font-extrabold flex items-center gap-1 mt-0.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Conectada y Activa
+                </strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase">Base de Datos:</span>
+                <strong className="font-mono text-slate-800 text-[11px] block truncate mt-0.5" title="ai-studio-puntozakia-2a0a1d1f-7fdd-41f8-86d6-09098d7613b3">
+                  ai-studio-puntozakia
+                </strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase">Protección Local:</span>
+                <strong className="text-blue-700 font-bold block mt-0.5">
+                  Mitigación de Cuota Activa
+                </strong>
+              </div>
+            </div>
+
+            {firebaseMigrateResult && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 font-semibold flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{firebaseMigrateResult}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+              <span className="text-[11px] text-slate-500">
+                Si tenías ventas guardadas en este navegador antes de conectar Firebase, pulsa aquí para subirlas a la nube:
+              </span>
+              <button
+                type="button"
+                disabled={isMigratingFirebase}
+                onClick={async () => {
+                  setIsMigratingFirebase(true);
+                  setFirebaseMigrateResult(null);
+                  playBeep(900, 'sine', 0.05);
+                  const res = await migrateLocalDataToFirebase();
+                  setIsMigratingFirebase(false);
+                  if (res.success) {
+                    playCashSound();
+                    setFirebaseMigrateResult(`¡Éxito! Se respaldaron y verificaron ${res.migratedTicketsCount} tickets en Firebase Firestore.`);
+                  } else {
+                    setFirebaseMigrateResult('Hubo un problema al respaldar. Revisa tu conexión a internet.');
+                  }
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-xs cursor-pointer flex items-center gap-2 shrink-0 transition-all disabled:opacity-50"
+              >
+                {isMigratingFirebase ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5" />}
+                <span>{isMigratingFirebase ? 'Respaldando en la Nube...' : 'Respaldar Todo en la Nube Ahora'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Reset button */}

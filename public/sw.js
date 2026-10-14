@@ -42,8 +42,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // 1. REGLA CRÍTICA: NUNCA interceptar ni cachear llamadas de red a APIs, cobros o sincronización en la nube
+  // 1. REGLA CRÍTICA: NUNCA interceptar ni cachear llamadas de red a APIs, Firebase, cobros o sincronización en la nube
   if (
+    url.hostname.includes('firebase') ||
+    url.hostname.includes('googleapis') ||
+    url.hostname.includes('firestore') ||
     url.pathname === '/api' ||
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/.netlify/') ||

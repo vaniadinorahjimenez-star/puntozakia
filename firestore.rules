@@ -1,0 +1,204 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'vaniadinorah.jimenez@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    // Entity Validators
+    function isValidTicket(data) {
+      return data.keys().hasAll(['id', 'folio', 'total', 'paymentMethod']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.folio is string && data.folio.size() <= 64 &&
+        data.total is number && data.total >= 0 &&
+        data.paymentMethod is string && data.paymentMethod.size() <= 32 &&
+        (!('items' in data) || data.items is list) &&
+        (!('subtotal' in data) || data.subtotal is number) &&
+        (!('discount' in data) || data.discount is number) &&
+        (!('amountPaid' in data) || data.amountPaid is number) &&
+        (!('change' in data) || data.change is number) &&
+        (!('cashier' in data) || (data.cashier is string && data.cashier.size() <= 128)) &&
+        (!('shift' in data) || (data.shift is string && data.shift.size() <= 32)) &&
+        (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 128)) &&
+        (!('customerPhone' in data) || (data.customerPhone is string && data.customerPhone.size() <= 32)) &&
+        (!('pointsEarned' in data) || data.pointsEarned is number) &&
+        (!('pointsRedeemed' in data) || data.pointsRedeemed is number) &&
+        (!('cardTerminal' in data) || (data.cardTerminal is string && data.cardTerminal.size() <= 64)) &&
+        (!('cardAuthCode' in data) || (data.cardAuthCode is string && data.cardAuthCode.size() <= 64)) &&
+        (!('cardReference' in data) || (data.cardReference is string && data.cardReference.size() <= 64)) &&
+        (!('cardLast4' in data) || (data.cardLast4 is string && data.cardLast4.size() <= 16));
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['id', 'folio', 'customerName', 'total', 'paymentStatus']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.folio is string && data.folio.size() <= 64 &&
+        data.customerName is string && data.customerName.size() <= 128 &&
+        data.total is number && data.total >= 0 &&
+        data.paymentStatus is string && data.paymentStatus.size() <= 32 &&
+        (!('items' in data) || data.items is list) &&
+        (!('customerPhone' in data) || (data.customerPhone is string && data.customerPhone.size() <= 32)) &&
+        (!('deliveryType' in data) || (data.deliveryType is string && data.deliveryType.size() <= 64)) &&
+        (!('deliveryDate' in data) || (data.deliveryDate is string && data.deliveryDate.size() <= 32)) &&
+        (!('deliveryTime' in data) || (data.deliveryTime is string && data.deliveryTime.size() <= 32)) &&
+        (!('deposit' in data) || data.deposit is number) &&
+        (!('pendingAmount' in data) || data.pendingAmount is number) &&
+        (!('assignedDriverId' in data) || (data.assignedDriverId is string && data.assignedDriverId.size() <= 64)) &&
+        (!('deliveryStatus' in data) || (data.deliveryStatus is string && data.deliveryStatus.size() <= 32));
+    }
+
+    function isValidShiftCut(data) {
+      return data.keys().hasAll(['id', 'folio', 'date', 'cashierName', 'expectedCashInDrawer']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.folio is string && data.folio.size() <= 64 &&
+        data.date is string && data.date.size() <= 32 &&
+        data.cashierName is string && data.cashierName.size() <= 128 &&
+        data.expectedCashInDrawer is number &&
+        (!('totalGrossSales' in data) || data.totalGrossSales is number) &&
+        (!('totalCashSales' in data) || data.totalCashSales is number) &&
+        (!('totalCardSales' in data) || data.totalCardSales is number) &&
+        (!('totalPieces' in data) || data.totalPieces is number) &&
+        (!('ticketsCount' in data) || data.ticketsCount is number);
+    }
+
+    function isValidCashOutflow(data) {
+      return data.keys().hasAll(['id', 'concept', 'amount']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.concept is string && data.concept.size() <= 256 &&
+        data.amount is number && data.amount >= 0 &&
+        (!('recipient' in data) || (data.recipient is string && data.recipient.size() <= 128)) &&
+        (!('time' in data) || (data.time is string && data.time.size() <= 32)) &&
+        (!('date' in data) || (data.date is string && data.date.size() <= 32));
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['id', 'name', 'phone']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.name is string && data.name.size() <= 128 &&
+        data.phone is string && data.phone.size() <= 32 &&
+        (!('points' in data) || data.points is number) &&
+        (!('totalSpent' in data) || data.totalSpent is number) &&
+        (!('visitsCount' in data) || data.visitsCount is number);
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'price']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.name is string && data.name.size() <= 128 &&
+        data.price is number && data.price >= 0 &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 64));
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['bakeryName']) &&
+        data.bakeryName is string && data.bakeryName.size() <= 128 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 256)) &&
+        (!('ticketFooter' in data) || (data.ticketFooter is string && data.ticketFooter.size() <= 256)) &&
+        (!('ticketPaperWidth' in data) || (data.ticketPaperWidth is string && data.ticketPaperWidth.size() <= 16));
+    }
+
+    // Health check endpoint for connection verification
+    match /test/{testId} {
+      allow get, list: if true;
+      allow write: if isBootstrappedAdmin() || isValidId(testId);
+    }
+
+    // Tickets collection
+    match /tickets/{ticketId} {
+      allow get, list: if true;
+      allow create: if isValidId(ticketId) && isValidTicket(incoming());
+      allow update: if isValidId(ticketId) && isValidTicket(incoming()) && (
+        isBootstrappedAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'paymentMethod', 'cardTerminal', 'cardAuthCode', 'cardReference', 'cardLast4',
+          'amountPaid', 'change', 'total', 'subtotal', 'shift', 'customerName', 'customerPhone',
+          'pointsEarned', 'pointsRedeemed'
+        ])
+      );
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Orders collection
+    match /orders/{orderId} {
+      allow get, list: if true;
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
+      allow update: if isValidId(orderId) && isValidOrder(incoming()) && (
+        isBootstrappedAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'paymentStatus', 'deliveryStatus', 'collectedAmount', 'deposit', 'pendingAmount',
+          'assignedDriverId', 'notes', 'deliveredAt', 'invoiceStatus', 'paidDate', 'paidMethod', 'paidReference'
+        ])
+      );
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Shift Cuts
+    match /shiftCuts/{shiftCutId} {
+      allow get, list: if true;
+      allow create: if isValidId(shiftCutId) && isValidShiftCut(incoming());
+      allow update: if isValidId(shiftCutId) && isValidShiftCut(incoming());
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Cash Outflows
+    match /outflows/{outflowId} {
+      allow get, list: if true;
+      allow create: if isValidId(outflowId) && isValidCashOutflow(incoming());
+      allow update: if isValidId(outflowId) && isValidCashOutflow(incoming());
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Customer Loyalty Records
+    match /customers/{customerId} {
+      allow get, list: if true;
+      allow create: if isValidId(customerId) && isValidCustomer(incoming());
+      allow update: if isValidId(customerId) && isValidCustomer(incoming()) && (
+        isBootstrappedAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'points', 'totalSpent', 'visitsCount', 'lastVisit', 'name', 'phone'
+        ])
+      );
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Product Catalog
+    match /products/{productId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(productId) && isValidProduct(incoming());
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    // Bakery POS Settings
+    match /settings/{settingId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(settingId) && isValidSettings(incoming());
+      allow delete: if isBootstrappedAdmin();
+    }
+  }
+}
