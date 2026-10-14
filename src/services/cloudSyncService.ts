@@ -214,7 +214,9 @@ export async function syncWithCloud(providedData?: {
           const cutsChanged = freshLocalShiftCuts.length !== mergedShiftCuts.length;
 
           if (ticketsChanged) {
-            localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
+            const ticketJson = JSON.stringify(mergedTickets);
+            localStorage.setItem(STORAGE_KEYS.TICKETS, ticketJson);
+            localStorage.setItem('santafe_tickets', ticketJson);
           }
           if (ordersChanged) {
             localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));
@@ -312,7 +314,9 @@ export async function fetchAndMergeCloud(): Promise<CloudSyncResult> {
         const cutsChanged = localShiftCuts.length !== mergedShiftCuts.length;
 
         if (ticketsChanged) {
-          localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify(mergedTickets));
+          const ticketJson = JSON.stringify(mergedTickets);
+          localStorage.setItem(STORAGE_KEYS.TICKETS, ticketJson);
+          localStorage.setItem('santafe_tickets', ticketJson);
         }
         if (ordersChanged) {
           localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(mergedOrders));

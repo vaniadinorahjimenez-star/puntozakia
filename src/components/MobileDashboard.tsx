@@ -878,6 +878,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           folio={celebrationData.folio}
           piecesCount={celebrationData.piecesCount}
           customerName={celebrationData.customerName}
+          isTicketPrinted={false}
           onClose={() => setCelebrationData(null)}
         />
       )}
@@ -893,10 +894,16 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         currentTicketCount={ticketItems.length}
         currentTicketTotal={totalAmount}
         onListeningStateChange={setIsMobileVoiceListening}
-        onTriggerCheckout={() => {
+        onTriggerCheckout={(t, voiceItems) => {
+          if (voiceItems && voiceItems.length > 0 && ticketItems.length === 0) {
+            handleAddVoiceItems(voiceItems);
+          }
           handleCheckout('efectivo');
         }}
-        onTriggerCardCheckout={() => {
+        onTriggerCardCheckout={(t, voiceItems) => {
+          if (voiceItems && voiceItems.length > 0 && ticketItems.length === 0) {
+            handleAddVoiceItems(voiceItems);
+          }
           handleCheckout('tarjeta');
         }}
       />

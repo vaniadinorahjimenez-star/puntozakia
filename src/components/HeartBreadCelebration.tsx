@@ -7,6 +7,7 @@ interface HeartBreadCelebrationProps {
   folio: string;
   piecesCount: number;
   customerName?: string;
+  isTicketPrinted?: boolean;
   onClose: () => void;
 }
 
@@ -24,7 +25,7 @@ interface DonutVariant {
 const DONUT_VARIANTS: DonutVariant[] = [
   {
     type: 'bounce',
-    title: '¡Venta Registrada sin Ticket!',
+    title: '¡Venta Registrada Exitosamente!',
     phrase: '¡Dona calientita y sonriente para alegrar el día!',
     glazeColor: '#F43F5E', // Strawberry pink
     glazeStop: '#BE123C',
@@ -32,7 +33,7 @@ const DONUT_VARIANTS: DonutVariant[] = [
   },
   {
     type: 'wink',
-    title: '¡Cobro sin Ticket Listo!',
+    title: '¡Cobro Listo!',
     phrase: '¡Dona glaseada con chispitas de pura felicidad!',
     glazeColor: '#FB7185', // Rose pink
     glazeStop: '#E11D48',
@@ -61,6 +62,7 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
   folio,
   piecesCount,
   customerName,
+  isTicketPrinted = false,
   onClose
 }) => {
   const [variant] = useState<DonutVariant>(() => {
@@ -104,7 +106,7 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
     <div
       id="donut-celebration-modal-overlay"
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 select-none cursor-pointer animate-in fade-in duration-200"
+      className="fixed inset-0 z-[99999] bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 select-none cursor-pointer animate-in fade-in duration-200"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -114,7 +116,7 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-3 right-3 w-7 h-7 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-black text-sm cursor-pointer z-30 transition-all active:scale-95"
+          className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-200/90 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-black text-sm cursor-pointer z-30 transition-all active:scale-95 shadow-sm"
           title="Cerrar donita"
         >
           ✕
@@ -142,7 +144,7 @@ export const HeartBreadCelebration: React.FC<HeartBreadCelebrationProps> = ({
         {/* Top Mini Badge */}
         <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-black text-white shadow-sm mb-2 bg-gradient-to-r from-pink-500 to-rose-600 animate-pulse">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>COBRO SIN TICKET</span>
+          <span>{isTicketPrinted ? '🖨️ TICKET REGISTRADO' : '🍩 VENTA REGISTRADA'}</span>
         </div>
 
         {/* Animated Smiling Donut Illustration */}

@@ -106,10 +106,12 @@ function mergeTickets(existingList, incomingList) {
   }
 
   return Array.from(map.values()).sort((a, b) => {
-    const timeA = new Date(a.timestamp || `${a.date}T${a.time || '00:00:00'}`).getTime();
-    const timeB = new Date(b.timestamp || `${b.date}T${b.time || '00:00:00'}`).getTime();
-    if (isNaN(timeA) || isNaN(timeB)) return 0;
-    return timeB - timeA;
+    const timeA = a.timestamp ? new Date(a.timestamp).getTime() : (a.date ? new Date(`${a.date}T${a.time || '00:00:00'}`).getTime() : 0);
+    const timeB = b.timestamp ? new Date(b.timestamp).getTime() : (b.date ? new Date(`${b.date}T${b.time || '00:00:00'}`).getTime() : 0);
+    const validA = isNaN(timeA) ? 0 : timeA;
+    const validB = isNaN(timeB) ? 0 : timeB;
+    if (validA !== validB) return validB - validA;
+    return (b.folio || b.id || '').localeCompare(a.folio || a.id || '');
   });
 }
 
@@ -271,7 +273,10 @@ exports.handler = async (event) => {
     try {
       let body = {};
       if (event.body) {
-        body = JSON.parse(event.body);
+        const rawBody = event.isBase64Encoded 
+          ? Buffer.from(event.body, 'base64').toString('utf8')
+          : event.body;
+        body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
       }
 
       const incomingTickets = body.tickets || [];

@@ -15,10 +15,14 @@ const PRECACHE_ASSETS = [
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-        console.warn('Advertencia en precache inicial de activos:', err);
-      });
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const asset of PRECACHE_ASSETS) {
+        try {
+          await cache.add(asset);
+        } catch (e) {
+          console.warn(`Aviso precacheando activo ${asset}:`, e);
+        }
+      }
     })
   );
 });
@@ -40,10 +44,14 @@ self.addEventListener('fetch', (event) => {
 
   // 1. REGLA CRÍTICA: NUNCA interceptar ni cachear llamadas de red a APIs, cobros o sincronización en la nube
   if (
+    url.pathname === '/api' ||
     url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/.netlify/functions/') ||
+    url.pathname.startsWith('/.netlify/') ||
+    url.pathname.includes('clip') ||
     url.pathname.includes('payclip.io') ||
     url.pathname.includes('zettle') ||
+    url.pathname.includes('sync') ||
+    url.pathname.includes('voice-assistant') ||
     event.request.method !== 'GET'
   ) {
     return;

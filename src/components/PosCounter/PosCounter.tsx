@@ -267,12 +267,13 @@ export const PosCounter: React.FC<PosCounterProps> = ({
   const orderModalSubtotal = orderModalItems.reduce((acc, it) => acc + it.total, 0);
   const orderModalPieces = orderModalItems.reduce((acc, it) => acc + it.quantity, 0);
 
-  // Heart Bread Celebration Popup state (Cobro sin ticket)
+  // Heart Bread Celebration Popup state (Donita sonriente)
   const [celebrationData, setCelebrationData] = useState<{
     total: number;
     folio: string;
     piecesCount: number;
     customerName?: string;
+    isTicketPrinted?: boolean;
   } | null>(null);
 
   // Descuento 10% Cliente Especial (Sucursal Zakia)
@@ -849,25 +850,16 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
 
-    // Mandar DIRECTO a impresión térmica sin ventana secundaria
-    setDirectPrintTicket(newTicket);
-    setPrintToastNotice(`🖨️ Imprimiendo Ticket #${folio} ($${total}.00)...`);
-    setTimeout(() => {
-      setPrintToastNotice('');
-    }, 3500);
-
-    // Ejecutar impresión directa térmica aislada
-    printTicketDirectToPrinter(newTicket, settings);
-
-    // Animación de la donita sonriente para registro con ticket
+    // 1. DISPARAR INMEDIATAMENTE la animación de la donita sonriente
     setCelebrationData({
       total,
       folio,
       piecesCount: totalPieces,
-      customerName: custIdentifier
+      customerName: custIdentifier,
+      isTicketPrinted: true
     });
 
-    // Reset local counter state for next customer
+    // 2. Limpiar estado del mostrador de inmediato para el siguiente cliente
     setTicketItems([]);
     setPointsToRedeem(0);
     setIsSpecialCustomerDiscount(false);
@@ -876,17 +868,33 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setSelectedCustomer(null);
     setVirtualPhoneInput('');
     setShowNewCustomerForm(false);
+
+    // 3. Mandar a impresión térmica protegida con try/catch (nunca bloquea la donita ni el registro)
+    setDirectPrintTicket(newTicket);
+    setPrintToastNotice(`🖨️ Imprimiendo Ticket #${folio} ($${total}.00)...`);
+    setTimeout(() => {
+      setPrintToastNotice('');
+    }, 3500);
+
+    try {
+      printTicketDirectToPrinter(newTicket, settings);
+    } catch (err) {
+      console.warn('Aviso en impresión térmica directa:', err);
+    }
   };
 
   // Process & Complete Sale WITHOUT Ticket (Triggers celebratory smiling donut animation)
-  const handleQuickCheckoutWithoutTicket = () => {
-    if (ticketItems.length === 0) return;
+  const handleQuickCheckoutWithoutTicket = (itemsOverride?: TicketItem[], totalOverride?: number) => {
+    const activeItems = (itemsOverride && itemsOverride.length > 0) ? itemsOverride : ticketItems;
+    if (activeItems.length === 0) return;
 
     playCashSound();
 
+    const currentTotal = totalOverride !== undefined 
+      ? totalOverride 
+      : (itemsOverride ? activeItems.reduce((acc, it) => acc + it.total, 0) : total);
+    const currentPieces = activeItems.reduce((acc, it) => acc + it.quantity, 0);
     const folio = getNextTicketFolio(tickets);
-    const currentTotal = total;
-    const currentPieces = totalPieces;
     const cleanPhone = selectedCustomer ? selectedCustomer.phone : phoneSearch.replace(/\D/g, '');
     const custIdentifier = cleanPhone ? `Tel: ${cleanPhone}` : undefined;
     const effectivePaid = numericCashGiven > 0 ? numericCashGiven : currentTotal;
@@ -898,8 +906,8 @@ export const PosCounter: React.FC<PosCounterProps> = ({
       timestamp: new Date().toISOString(),
       date: getTodayString(),
       time: getNowTimeString(true),
-      items: ticketItems,
-      subtotal,
+      items: [...activeItems],
+      subtotal: currentTotal,
       discount: totalDiscount,
       total: currentTotal,
       paymentMethod: 'efectivo',
@@ -940,12 +948,13 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     // Registrar de inmediato en la lista reactiva de últimos 2 cobros en vivo
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
 
-    // Trigger Donut animation popup
+    // Trigger Donut animation popup inmediatamente
     setCelebrationData({
       total: currentTotal,
       folio,
       piecesCount: currentPieces,
-      customerName: custIdentifier
+      customerName: custIdentifier,
+      isTicketPrinted: false
     });
 
     // Reset local counter state for next customer
@@ -1027,25 +1036,16 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setRecentlyCreatedTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
     setShowZettleModal(false);
 
-    // Mandar directo a impresión térmica sin abrir modal secundario
-    setDirectPrintTicket(newTicket);
-    setPrintToastNotice(`🖨️ Imprimiendo Ticket Tarjeta #${folio} ($${total}.00)...`);
-    setTimeout(() => {
-      setPrintToastNotice('');
-    }, 3500);
-
-    // Ejecutar impresión directa térmica aislada
-    printTicketDirectToPrinter(newTicket, settings);
-
-    // Animación de la donita sonriente para registro con tarjeta
+    // 1. Animación de la donita sonriente para registro con tarjeta INMEDIATA
     setCelebrationData({
       total,
       folio,
       piecesCount: totalPieces,
-      customerName: custIdentifier
+      customerName: custIdentifier,
+      isTicketPrinted: true
     });
 
-    // Reset local counter state for next customer
+    // 2. Reset local counter state for next customer
     setTicketItems([]);
     setPointsToRedeem(0);
     setIsSpecialCustomerDiscount(false);
@@ -1054,6 +1054,19 @@ export const PosCounter: React.FC<PosCounterProps> = ({
     setSelectedCustomer(null);
     setVirtualPhoneInput('');
     setShowNewCustomerForm(false);
+
+    // 3. Mandar directo a impresión térmica protegida
+    setDirectPrintTicket(newTicket);
+    setPrintToastNotice(`🖨️ Imprimiendo Ticket Tarjeta #${folio} ($${total}.00)...`);
+    setTimeout(() => {
+      setPrintToastNotice('');
+    }, 3500);
+
+    try {
+      printTicketDirectToPrinter(newTicket, settings);
+    } catch (err) {
+      console.warn('Aviso en impresión térmica de tarjeta:', err);
+    }
   };
 
   // Mandar directo a cobro a la terminal Clip al decir "pagar con tarjeta" / "cobro con tarjeta"
@@ -3939,13 +3952,14 @@ export const PosCounter: React.FC<PosCounterProps> = ({
         />
       )}
 
-      {/* Smiling Donut Celebration Modal (Cobro sin ticket) */}
+      {/* Smiling Donut Celebration Modal (Animación de la donita sonriente para ventas) */}
       {celebrationData && (
         <HeartBreadCelebration
           total={celebrationData.total}
           folio={celebrationData.folio}
           piecesCount={celebrationData.piecesCount}
           customerName={celebrationData.customerName}
+          isTicketPrinted={celebrationData.isTicketPrinted}
           onClose={() => setCelebrationData(null)}
         />
       )}
@@ -4184,9 +4198,19 @@ export const PosCounter: React.FC<PosCounterProps> = ({
           setIsVoiceListening(listening);
           window.dispatchEvent(new CustomEvent('voice-assistant-listening-change', { detail: { listening } }));
         }}
-        onTriggerCheckout={(t) => {
+        onTriggerCheckout={(t, voiceItems) => {
           playCashSound();
-          handleQuickCheckoutWithoutTicket();
+          let mappedItems: TicketItem[] | undefined = undefined;
+          if (voiceItems && voiceItems.length > 0) {
+            mappedItems = voiceItems.map((it: any, idx: number) => ({
+              id: `item-voice-${Date.now()}-${idx}`,
+              name: it.concepto,
+              price: it.precio_unitario,
+              quantity: it.cantidad,
+              total: it.subtotal
+            }));
+          }
+          handleQuickCheckoutWithoutTicket(mappedItems, t);
         }}
         onTriggerCardCheckout={(t) => {
           handleVoiceCardCheckout();
